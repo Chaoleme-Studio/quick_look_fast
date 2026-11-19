@@ -1,0 +1,21 @@
+/references/
+/node_modules/
+/.npm-cache/
+/dist/
+/dist-electron/
+/artifacts/
+/native/windows/bin/
+/public/file-viewer/
+
+# Local editor, operating-system and temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.log
+*.tmp
+*.swp
+.env
+.env.*
+!.env.example

@@ -1,0 +1,1255 @@
+import './style.css';
+import { selectExtraRenderers } from './extra-renderers';
+import { FORCE_INSPECTION_EXTENSIONS, formatHexSample, isProbablyText, readHead } from './file-inspection';
+import { MarkdownOutline } from './markdown-outline';
+import { mountFolderPreview, type FolderFile, type FolderPage, type FolderPreview, type FolderView } from './folder-preview';
+import { installImageWheelZoom } from './image-wheel-zoom';
+import { mountBrowserImage, supportsBrowserImage } from './browser-image';
+import { mountZipPreview, mountRarPreview, type ContentRequest, type ContentResponse } from './zip-preview';
+import { requestPassword } from './password-prompt';
+import { mountAudioWaveform } from './audio-waveform';
+import type { ViewerController, ViewerOptions, ViewerState } from '@file-viewer/web-full';
+import type { RendererDefinition } from '@file-viewer/core';
+
+interface PreviewFile {
+  url: string;
+  name: string;
+  size: number;
+  path?: string;
+  modifiedAt?: string;
+  createdAt?: string;
+  shortcut?: { target?: string; description?: string };
+}
+
+declare global {
+  interface Window {
+    slowLook: {
+      platform: string;
+      selectFile(): Promise<void>;
+      selectFolder(): Promise<void>;
+      readDirectory(id: string, offset: number): Promise<FolderPage>;
+      openDirectoryFile(id: string, purpose: 'thumbnail' | 'preview'): Promise<FolderFile>;
+      releaseDirectoryPreview(folderId: string): void;
+      contentTask(request: ContentRequest): Promise<ContentResponse>;
+      cancelContent(url: string): void;
+      focusPreview(): void;
+      openDroppedFile(file: File): Promise<void>;
+      hide(): void;
+      navigate(key: string): void;
+      setPinned(enabled: boolean): void;
+      openProjectLink(destination: 'organization' | 'flyfish'): void;
+      onPinState(listener: (pinned: boolean) => void): void;
+      getStartup(): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
+      setStartup(enabled: boolean): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
+      setFinderShortcut(enabled: boolean): void;
+      metric(phase: string): void;
+      onStart(listener: (file: { name: string }) => void): void;
+      onPreview(listener: (file: PreviewFile) => void): void;
+      onDirectory(listener: (folder: FolderPreview) => void): void;
+      onClear(listener: () => void): void;
+      onProgress(listener: (progress: { phase: 'reading' | 'parsing' | 'range'; loaded?: number; total?: number }) => void): void;
+      onIntegrationStatus(listener: (message: string) => void): void;
+      onError(listener: (message: string) => void): void;
+    };
+  }
+}
+
+const app = document.querySelector<HTMLDivElement>('#app');
+if (!app) throw new Error('找不到应用容器');
+
+const settingsGroups = [
+  { id: 'general', label: '常规', eyebrow: 'GENERAL', description: '让预览符合你的使用习惯', rows: [
+    { id: 'navigation', title: '方向键切换文件', detail: '在预览中切换文件管理器的选中项' },
+    { id: 'autoplay', title: '自动播放音频和视频', detail: '打开后直接播放，关闭预览时停止' },
+    { id: 'startup', title: '开机自动启动', detail: '登录后在后台运行，随时按空格预览' },
+  ] },
+  { id: 'reading', label: '阅读与文本', eyebrow: 'READING', description: '为代码、文本与文档选择舒适的阅读方式', rows: [
+    { id: 'line-numbers', title: '显示行号', detail: '为代码和纯文本显示行号与行数' },
+    { id: 'wrap-lines', title: '自动换行', detail: '长行按窗口宽度换行；大文件片段保持横向滚动' },
+    { id: 'markdown-toc', title: 'Markdown 目录', detail: '在文档旁显示章节，点击即可跳转' },
+  ] },
+  { id: 'folder', label: '文件夹', eyebrow: 'FOLDERS', description: '按需浏览文件夹和其中的文件', rows: [
+    { id: 'folder-preview', title: '文件夹内文件预览', detail: '选择文件后在右侧显示内容，关闭后使用完整目录宽度' },
+    { id: 'folder-thumbnails', title: '显示图片缩略图', detail: '按可见范围加载常见图片；其他格式显示类型图标' },
+  ] },
+  { id: 'integration', label: '系统集成', eyebrow: 'INTEGRATIONS', description: '连接系统的文件管理器', rows: [
+    { id: 'finder-shortcut', title: 'Finder 和桌面快捷键（试验）', detail: '按 ⌘ Shift Space 预览选中文件，需要自动化权限', rowId: 'finder-shortcut-row' },
+  ] },
+  { id: 'about', label: '关于', eyebrow: 'ABOUT', description: '轻松预览，让文件触手可及', rows: [] },
+] as const;
+
+app.innerHTML = `
+  <div class="window">
+    <header class="titlebar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>QuickLook Fast</span></div>
+      <div class="file-meta" aria-live="polite"><span id="file-name"></span><span id="file-size"></span></div>
+      <div class="window-actions">
+        <button class="icon-action" id="file-info-open" type="button" aria-label="文件信息" title="文件信息" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v4m0-7h.01"/></svg></button>
+        <button class="icon-action pin-action" id="pin-window" type="button" aria-label="固定此预览" aria-pressed="false" title="固定此预览"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3.5h6l-.6 4 2.6 2.8v1.2H5v-1.2l2.6-2.8L7 3.5Zm3 8v5"/></svg></button>
+        <button class="open-action" id="choose" type="button" title="打开文件 (Ctrl+O)">打开文件</button>
+        <button class="open-action" id="settings-open" type="button" title="设置">设置</button>
+        <span class="divider"></span>
+        <button class="close-action" id="close" type="button" aria-label="关闭预览" title="关闭预览 (Esc)">×</button>
+      </div>
+    </header>
+    <main id="drop-zone">
+      <section id="welcome" class="welcome">
+        <div class="welcome-content">
+          <div class="welcome-icon" aria-hidden="true"><span></span></div>
+          <h1>看一眼，就够了。</h1>
+          <p>选择文件或拖放到这里，立即预览。</p>
+          <button id="choose-welcome" class="primary-button" type="button">选择文件 <span>↗</span></button>
+          <button id="choose-folder" class="secondary-button" type="button">选择文件夹</button>
+          <div class="hint"><kbd>Space</kbd><span>预览文件</span><i></i><kbd>Esc</kbd><span>关闭</span></div>
+        </div>
+        <div class="welcome-footer"><span id="integration-status" role="status"></span>本地预览 <span>·</span> Powered by Flyfish File Viewer</div>
+      </section>
+      <section id="preview" class="preview" tabindex="-1" hidden>
+        <div id="viewer"></div>
+        <nav id="markdown-toc" class="markdown-toc" aria-label="文档目录" hidden><div class="toc-heading">文档目录</div><div id="markdown-toc-list"></div></nav>
+        <aside id="file-info" class="file-info" aria-label="文件信息" hidden><div class="file-info-heading"><strong>文件信息</strong><button id="file-info-close" class="close-action" type="button" aria-label="关闭文件信息">×</button></div><div id="file-info-content"></div></aside>
+        <div id="loading" class="overlay" role="status" aria-live="polite" hidden>
+          <div class="loading-content"><span class="spinner"></span><strong id="loading-label">正在准备预览</strong>
+            <span id="loading-detail">大文件可能需要一些时间</span><progress id="loading-progress" max="100" hidden></progress></div>
+        </div>
+        <div id="error" class="overlay error" hidden><span class="error-icon">!</span><strong>无法预览</strong><span id="error-message"></span></div>
+      </section>
+      <div id="drag-overlay" class="drag-overlay" hidden><span>松开鼠标预览文件</span></div>
+    </main>
+    <div id="settings" class="settings-backdrop" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+      <section class="settings-panel">
+        <aside class="settings-sidebar"><div class="settings-brand"><span class="settings-brand-mark">Q</span><span>QuickLook Fast<small>PREFERENCES</small></span></div><h2 id="settings-title">设置</h2><nav class="settings-tabs" role="tablist" aria-label="设置分类">
+          ${settingsGroups.map((group, index) => `<button type="button" role="tab" id="tab-${group.id}" aria-controls="group-${group.id}" aria-selected="${index === 0}" data-settings-tab="${group.id}" tabindex="${index === 0 ? '0' : '-1'}"><span class="settings-tab-dot"></span>${group.label}</button>`).join('')}
+        </nav><div class="settings-sidebar-footer"><span class="status-dot"></span>更改自动保存</div></aside>
+        <div class="settings-body"><button id="settings-close" class="close-action settings-close" type="button" aria-label="关闭设置">×</button>
+          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card">${group.rows.map((row) => `<label ${'rowId' in row ? `id="${row.rowId}" hidden` : ''} class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? '<div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>' : ''}</div>${group.id === 'integration' ? '<p class="settings-note">当前状态：<span id="integration-current-status">等待文件管理器操作</span><br>支持的文件管理器和权限随系统而异，详情见使用文档。</p>' : ''}</section>`).join('')}
+        </div>
+      </section>
+    </div>
+  </div>
+`;
+
+function element<T extends HTMLElement>(selector: string): T {
+  const result = document.querySelector<T>(selector);
+  if (!result) throw new Error(`缺少界面元素 ${selector}`);
+  return result;
+}
+
+const nameLabel = element('#file-name');
+const sizeLabel = element('#file-size');
+const welcome = element('#welcome');
+const preview = element('#preview');
+const viewerHost = element('#viewer');
+const loading = element('#loading');
+const loadingLabel = element('#loading-label');
+const loadingDetail = element('#loading-detail');
+const loadingProgress = element<HTMLProgressElement>('#loading-progress');
+const errorBox = element('#error');
+const errorMessage = element('#error-message');
+const dragOverlay = element('#drag-overlay');
+const settingsPanel = element('#settings');
+const infoPanel = element('#file-info');
+const infoButton = element<HTMLButtonElement>('#file-info-open');
+const infoContent = element('#file-info-content');
+const toc = element('#markdown-toc');
+const tocList = element('#markdown-toc-list');
+const navigationSetting = element<HTMLInputElement>('#settings-navigation');
+const startupSetting = element<HTMLInputElement>('#settings-startup');
+const autoplaySetting = element<HTMLInputElement>('#settings-autoplay');
+const lineNumbersSetting = element<HTMLInputElement>('#settings-line-numbers');
+const wrapLinesSetting = element<HTMLInputElement>('#settings-wrap-lines');
+const markdownTocSetting = element<HTMLInputElement>('#settings-markdown-toc');
+const finderShortcutSetting = element<HTMLInputElement>('#settings-finder-shortcut');
+const folderPreviewSetting = element<HTMLInputElement>('#settings-folder-preview');
+const folderThumbnailsSetting = element<HTMLInputElement>('#settings-folder-thumbnails');
+const pinButton = element<HTMLButtonElement>('#pin-window');
+let controller: ViewerController | undefined;
+const nestedControllers = new Set<ViewerController>();
+let removeMainImageWheel: (() => void) | undefined;
+let media: HTMLMediaElement | undefined;
+let disposeMediaVisual: (() => void) | undefined;
+let textRead: AbortController | undefined;
+let refreshLargeText: (() => void) | undefined;
+let refreshFolderText: (() => void) | undefined;
+let disposeLargeText: (() => void) | undefined;
+let probeRead: AbortController | undefined;
+let infoRead: AbortController | undefined;
+let currentPreview: PreviewFile | undefined;
+let markdownOutline: MarkdownOutline | undefined;
+let folderView: FolderView | undefined;
+let disposeZip: (() => void) | undefined;
+let generation = 0;
+let isPreviewing = false;
+let lastReadyGeneration = -1;
+
+function savedSetting(key: string, fallback = true): boolean {
+  try {
+    const value = window.localStorage.getItem(`slowlook.${key}`);
+    return value === null ? fallback : value === 'true';
+  } catch { return fallback; }
+}
+navigationSetting.checked = savedSetting('navigation');
+autoplaySetting.checked = savedSetting('autoplay');
+lineNumbersSetting.checked = savedSetting('lineNumbers');
+wrapLinesSetting.checked = savedSetting('wrapLines', false);
+markdownTocSetting.checked = savedSetting('markdownToc');
+finderShortcutSetting.checked = savedSetting('finderShortcut', false);
+folderPreviewSetting.checked = savedSetting('folderPreview');
+folderThumbnailsSetting.checked = savedSetting('folderThumbnails');
+if (window.slowLook.platform === 'darwin') {
+  element('#finder-shortcut-row').hidden = false;
+  window.slowLook.setFinderShortcut(finderShortcutSetting.checked);
+} else element('#finder-shortcut-row').parentElement!.hidden = true;
+const startupDetail = startupSetting.closest('label')?.querySelector('small');
+const startupDescription = startupDetail?.textContent || '';
+startupSetting.disabled = true;
+function applyStartupState(state: { supported: boolean; enabled: boolean; message?: string }): void {
+  startupSetting.checked = state.enabled;
+  startupSetting.disabled = !state.supported;
+  if (startupDetail) startupDetail.textContent = state.message || startupDescription;
+}
+void window.slowLook.getStartup().then(applyStartupState).catch(() => applyStartupState({ supported: false, enabled: false, message: '无法读取开机自启设置。' }));
+startupSetting.addEventListener('change', () => {
+  startupSetting.disabled = true;
+  void window.slowLook.setStartup(startupSetting.checked).then(applyStartupState)
+    .catch(() => applyStartupState({ supported: false, enabled: false, message: '无法更改开机自启设置。' }));
+});
+let pinned = false;
+function syncPin(): void {
+  pinButton.setAttribute('aria-pressed', String(pinned));
+  pinButton.setAttribute('aria-label', pinned ? '取消固定并取消置顶' : '固定并置顶此预览');
+  pinButton.title = pinned ? '取消固定并取消置顶' : '固定并置顶此预览，继续查看其他文件';
+}
+syncPin();
+window.slowLook.onPinState((value) => { pinned = value; syncPin(); });
+for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [finderShortcutSetting, 'finderShortcut'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const) {
+  input.addEventListener('change', () => {
+    try { window.localStorage.setItem(`slowlook.${key}`, String(input.checked)); } catch { /* use this session's value */ }
+    if (key === 'autoplay' && input.checked && media) void media.play().catch(() => undefined);
+    if (key === 'finderShortcut' && window.slowLook.platform === 'darwin') window.slowLook.setFinderShortcut(input.checked);
+    if (key === 'folderPreview' || key === 'folderThumbnails') folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
+    if (key === 'markdownToc') setupMarkdownToc();
+    if (key === 'lineNumbers' || key === 'wrapLines') {
+      refreshLargeText?.();
+      refreshFolderText?.();
+      if (controller) void controller.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
+      for (const nested of nestedControllers) void nested.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
+    }
+  });
+}
+document.querySelectorAll<HTMLButtonElement>('[data-external-link]').forEach((button) => button.addEventListener('click', () => {
+  const destination = button.dataset.externalLink;
+  if (destination === 'organization' || destination === 'flyfish') window.slowLook.openProjectLink(destination);
+}));
+pinButton.addEventListener('click', () => {
+  window.slowLook.setPinned(!pinned);
+});
+
+function textOptions(): NonNullable<ViewerOptions['text']> {
+  return { lineNumbers: lineNumbersSetting.checked, wrapLongLines: wrapLinesSetting.checked };
+}
+
+function stopMedia(): void {
+  disposeMediaVisual?.();
+  disposeMediaVisual = undefined;
+  if (!media) return;
+  media.pause();
+  media.removeAttribute('src');
+  media.load();
+  media = undefined;
+}
+
+function stopTextRead(): void {
+  textRead?.abort();
+  textRead = undefined;
+}
+
+function stopProbe(): void {
+  probeRead?.abort();
+  probeRead = undefined;
+  infoRead?.abort();
+  infoRead = undefined;
+}
+
+function clearLargeText(): void {
+  disposeLargeText?.();
+  disposeLargeText = undefined;
+  refreshLargeText = undefined;
+}
+
+function clearFolder(): void {
+  removeMainImageWheel?.();
+  removeMainImageWheel = undefined;
+  folderView?.dispose();
+  folderView = undefined;
+  disposeZip?.();
+  disposeZip = undefined;
+}
+
+function resetLoading(label = '正在准备预览'): void {
+  loadingLabel.textContent = label;
+  loadingDetail.textContent = '大文件可能需要一些时间';
+  loadingProgress.hidden = true;
+}
+
+function mediaKind(name: string): 'audio' | 'video' | undefined {
+  const extension = name.split('.').pop()?.toLowerCase();
+  if (extension && ['mp3', 'm4a', 'aac', 'wav', 'flac', 'oga', 'ogg', 'opus', 'weba'].includes(extension)) return 'audio';
+  if (extension && ['mp4', 'm4v', 'webm', 'ogv', 'mov'].includes(extension)) return 'video';
+  return undefined;
+}
+
+function createMediaView(file: { name: string; size: number; url: string }, kind: 'audio' | 'video'): { wrapper: HTMLElement; player: HTMLMediaElement; audioDetails?: HTMLElement; dispose(): void } {
+  const wrapper = document.createElement('div');
+  wrapper.className = `media-view media-${kind}`;
+  const player = document.createElement(kind);
+  player.controls = true;
+  player.preload = 'metadata';
+  player.autoplay = autoplaySetting.checked;
+  player.src = file.url;
+  let audioDetails: HTMLElement | undefined;
+  let dispose = (): void => {};
+  if (kind === 'audio') {
+    const card = document.createElement('div');
+    card.className = 'audio-card';
+    const waveform = mountAudioWaveform(player, file);
+    dispose = waveform.dispose;
+    const copy = document.createElement('div');
+    copy.className = 'audio-copy';
+    const eyebrow = document.createElement('span');
+    eyebrow.className = 'audio-eyebrow';
+    eyebrow.textContent = '音频预览';
+    const title = document.createElement('h2');
+    title.textContent = file.name;
+    audioDetails = document.createElement('p');
+    audioDetails.textContent = `${file.name.split('.').pop()?.toUpperCase() || 'AUDIO'} · ${formatSize(file.size)}`;
+    copy.append(eyebrow, title, audioDetails);
+    card.append(copy, waveform.element, player);
+    wrapper.append(card);
+  } else wrapper.append(player);
+  return { wrapper, player, audioDetails, dispose };
+}
+
+function showMedia(file: PreviewFile, current: number, kind: 'audio' | 'video'): void {
+  const { wrapper, player, audioDetails, dispose } = createMediaView(file, kind);
+  media = player;
+  disposeMediaVisual = dispose;
+  player.addEventListener('loadedmetadata', () => {
+    if (current !== generation) return;
+    if (audioDetails && Number.isFinite(player.duration)) {
+      const seconds = Math.floor(player.duration);
+      audioDetails.textContent += ` · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    }
+    loading.hidden = true;
+    errorBox.hidden = true;
+    if (lastReadyGeneration !== current) {
+      lastReadyGeneration = current;
+      window.slowLook.metric('content-ready');
+    }
+    if (autoplaySetting.checked) void player.play().catch(() => undefined);
+  }, { once: true });
+  player.addEventListener('error', () => {
+    if (current !== generation) return;
+    stopMedia();
+    resetLoading('正在尝试其他预览方式');
+    loading.hidden = false;
+    void loadFlyfish(file, current);
+  }, { once: true });
+  viewerHost.replaceChildren(wrapper);
+}
+
+const LARGE_TEXT_THRESHOLD = 16 * 1024 * 1024;
+const LARGE_TEXT_CHUNK = 1024 * 1024;
+const MAX_FULL_TEXT = 64 * 1024 * 1024;
+const textExtensions = new Set(['txt', 'log', 'md', 'markdown', 'srt', 'vtt', 'ass', 'ssa', 'lrc', 'json', 'jsonc', 'json5', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'css', 'html', 'htm', 'xml', 'yaml', 'yml', 'ini', 'sh', 'bash', 'zsh', 'ps1', 'sql', 'go', 'rs', 'py', 'java', 'c', 'cpp', 'cc', 'h', 'hpp', 'cs', 'rb', 'swift', 'kt', 'php', 'toml', 'csv', 'tsv']);
+function shouldPreviewTextInChunks(file: PreviewFile): boolean {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  return file.size > LARGE_TEXT_THRESHOLD && Boolean(extension && textExtensions.has(extension));
+}
+
+function showLargeText(file: PreviewFile, current: number, viewerFilename = file.name): void {
+  const container = document.createElement('div');
+  container.className = 'large-text';
+  const toolbar = document.createElement('div');
+  toolbar.className = 'large-text-toolbar';
+  const label = document.createElement('span');
+  label.id = 'large-text-label';
+  const start = document.createElement('button');
+  const end = document.createElement('button');
+  const full = document.createElement('button');
+  start.type = end.type = full.type = 'button';
+  start.textContent = '文件开头';
+  end.textContent = '文件末尾';
+  full.textContent = '完整加载';
+  full.hidden = file.size > MAX_FULL_TEXT;
+  const content = document.createElement('pre');
+  content.id = 'large-text-content';
+  const scroller = document.createElement('div');
+  scroller.className = 'large-text-scroll';
+  const gutter = document.createElement('div');
+  gutter.className = 'large-text-gutter';
+  gutter.setAttribute('aria-hidden', 'true');
+  const gutterViewport = document.createElement('div');
+  gutterViewport.className = 'large-text-gutter-viewport';
+  const gutterNumbers = document.createElement('div');
+  gutterNumbers.className = 'large-text-gutter-numbers';
+  gutterViewport.append(gutterNumbers);
+  gutter.append(gutterViewport);
+  scroller.append(gutter, content);
+  toolbar.append(label, start, end, full);
+  container.append(toolbar, scroller);
+  viewerHost.replaceChildren(container);
+  let encoding = 'utf-8';
+  let displayedLines = 0;
+  let displayedBytes = 0;
+  let showingTail = false;
+
+  // Only create the numbers visible in the viewport, even for a fragment with many short lines.
+  const updateGutter = (): void => {
+    gutter.hidden = !lineNumbersSetting.checked;
+    scroller.classList.toggle('with-line-numbers', lineNumbersSetting.checked);
+    const lines = lineNumbersSetting.checked ? ` · 片段 ${displayedLines.toLocaleString()} 行${showingTail ? '，行号从片段开始' : ''}` : '';
+    label.textContent = `仅显示${showingTail ? '末尾' : '开头'} ${formatSize(displayedBytes)} · 总计 ${formatSize(file.size)}${lines}`;
+    if (gutter.hidden) return;
+    const viewportHeight = scroller.clientHeight || 400;
+    const first = Math.max(0, Math.floor((scroller.scrollTop - 20) / 21) - 1);
+    const last = Math.min(displayedLines, first + Math.ceil(viewportHeight / 21) + 3);
+    gutterViewport.style.height = `${viewportHeight}px`;
+    gutterNumbers.style.transform = `translateY(${20 + first * 21 - scroller.scrollTop}px)`;
+    gutterNumbers.textContent = Array.from({ length: Math.max(0, last - first) }, (_, index) => String(first + index + 1)).join('\n');
+  };
+  scroller.addEventListener('scroll', updateGutter, { passive: true });
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(updateGutter) : undefined;
+  observer?.observe(scroller);
+  refreshLargeText = updateGutter;
+  disposeLargeText = () => {
+    scroller.removeEventListener('scroll', updateGutter);
+    observer?.disconnect();
+  };
+
+  const readChunk = async (tail: boolean): Promise<void> => {
+    stopTextRead();
+    const operation = new AbortController();
+    textRead = operation;
+    const first = tail ? Math.max(0, file.size - LARGE_TEXT_CHUNK) : 0;
+    const last = Math.min(file.size - 1, first + LARGE_TEXT_CHUNK - 1);
+    resetLoading('正在读取文件片段');
+    loading.hidden = false;
+    try {
+      const response = await fetch(file.url, { headers: { Range: `bytes=${first}-${last}` }, signal: operation.signal });
+      if (response.status !== 206) throw new Error('无法按需读取文件片段');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (current !== generation || operation.signal.aborted) return;
+      if (!tail && bytes[0] === 0xff && bytes[1] === 0xfe) encoding = 'utf-16le';
+      else if (!tail && bytes[0] === 0xfe && bytes[1] === 0xff) encoding = 'utf-16be';
+      let offset = 0;
+      if (tail && encoding === 'utf-8') while (offset < 3 && (bytes[offset] & 0xc0) === 0x80) offset += 1;
+      if (tail && encoding.startsWith('utf-16') && first % 2 !== 0) offset = 1;
+      let decoded: string;
+      try {
+        decoded = new TextDecoder(encoding, { fatal: true }).decode(bytes.subarray(offset), { stream: true });
+      } catch {
+        if (!tail) encoding = 'gb18030';
+        decoded = new TextDecoder(encoding).decode(bytes.subarray(offset));
+      }
+      content.textContent = decoded;
+      displayedLines = 1;
+      for (let index = 0; index < decoded.length; index += 1) {
+        const character = decoded.charCodeAt(index);
+        if (character === 13) {
+          displayedLines += 1;
+          if (decoded.charCodeAt(index + 1) === 10) index += 1;
+        } else if (character === 10) displayedLines += 1;
+      }
+      displayedBytes = bytes.byteLength;
+      showingTail = tail;
+      scroller.scrollTop = 0;
+      updateGutter();
+      loading.hidden = true;
+      if (lastReadyGeneration !== current) {
+        lastReadyGeneration = current;
+        window.slowLook.metric('content-ready');
+      }
+    } catch (error) {
+      if (current === generation && !operation.signal.aborted) showError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (textRead === operation) textRead = undefined;
+    }
+  };
+  start.addEventListener('click', () => { void readChunk(false); });
+  end.addEventListener('click', () => { void readChunk(true); });
+  full.addEventListener('click', () => {
+    stopTextRead();
+    clearLargeText();
+    resetLoading('正在加载完整文件');
+    loading.hidden = false;
+    void loadFlyfish(file, current, viewerFilename);
+  });
+  void readChunk(false);
+}
+
+let viewerPromise: Promise<typeof import('@file-viewer/web-full')> | undefined;
+function loadViewer(): Promise<typeof import('@file-viewer/web-full')> {
+  if (!viewerPromise) viewerPromise = import('@file-viewer/web-full').catch((error) => { viewerPromise = undefined; throw error; });
+  return viewerPromise;
+}
+async function loadModules(filename: string): Promise<{ viewer: typeof import('@file-viewer/web-full'); renderers: ViewerOptions['renderers'] }> {
+  const [viewer, core] = await Promise.all([loadViewer(), import('@file-viewer/core')]);
+  const extras = selectExtraRenderers(filename, core.DEFAULT_RENDERER_DEFINITIONS);
+  const renderers = await Promise.all([
+    ...(extras.has('binary') ? [import('@file-viewer/renderer-binary').then((module) => module.binaryRenderer)] : []),
+    ...(extras.has('design') ? [import('@file-viewer/renderer-design').then((module) => module.designRenderer)] : []),
+    ...(extras.has('signature') ? [import('@file-viewer/renderer-signature').then((module) => module.signatureRenderer)] : []),
+  ]);
+  return { viewer, renderers: renderers as unknown as ViewerOptions['renderers'] };
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = bytes / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function infoRow(list: HTMLElement, label: string, value: unknown): void {
+  if (value === undefined || value === null || value === '') return;
+  const term = document.createElement('dt');
+  const detail = document.createElement('dd');
+  term.textContent = label;
+  detail.textContent = value instanceof Date ? value.toLocaleString('zh-CN') : String(value);
+  list.append(term, detail);
+}
+
+function formatDate(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? undefined : date.toLocaleString('zh-CN');
+}
+
+function fileInfoDetails(file: PreviewFile): HTMLElement {
+  const list = document.createElement('dl');
+  list.className = 'metadata-list';
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toUpperCase() : '';
+  infoRow(list, '名称', file.name);
+  infoRow(list, '类型', extension ? `${extension} 文件` : '文件');
+  infoRow(list, '大小', `${formatSize(file.size)} · ${file.size.toLocaleString()} 字节`);
+  infoRow(list, '修改时间', formatDate(file.modifiedAt));
+  infoRow(list, '创建时间', formatDate(file.createdAt));
+  infoRow(list, '位置', file.path);
+  infoRow(list, '快捷方式目标', file.shortcut?.target);
+  infoRow(list, '说明', file.shortcut?.description);
+  return list;
+}
+
+function showMetadataFallback(file: PreviewFile, reason: string, sample?: Uint8Array): void {
+  stopTextRead();
+  clearLargeText();
+  stopMedia();
+  const oldController = controller;
+  controller = undefined;
+  if (oldController) void oldController.destroy();
+  clearMarkdownToc();
+  const root = document.createElement('div');
+  root.className = 'metadata-fallback';
+  const card = document.createElement('div');
+  card.className = 'metadata-card';
+  const icon = document.createElement('div');
+  icon.className = 'metadata-icon';
+  icon.textContent = (file.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase();
+  const heading = document.createElement('h2');
+  heading.textContent = file.name;
+  const note = document.createElement('p');
+  note.textContent = reason;
+  card.append(icon, heading, note, fileInfoDetails(file));
+  if (sample?.length) {
+    const label = document.createElement('div');
+    label.className = 'hex-label';
+    label.textContent = '文件头 · 最多 64 字节';
+    const hex = document.createElement('pre');
+    hex.className = 'metadata-hex';
+    hex.textContent = formatHexSample(sample);
+    card.append(label, hex);
+  }
+  root.append(card);
+  viewerHost.replaceChildren(root);
+  loading.hidden = true;
+  errorBox.hidden = true;
+  if (lastReadyGeneration !== generation) {
+    lastReadyGeneration = generation;
+    window.slowLook.metric('content-ready');
+  }
+}
+
+async function showFileInfo(file: PreviewFile): Promise<void> {
+  infoRead?.abort();
+  const operation = new AbortController();
+  infoRead = operation;
+  infoPanel.hidden = false;
+  infoContent.replaceChildren(fileInfoDetails(file));
+  if (!/\.(jpe?g|tiff?|png|webp|heic|heif|avif)$/i.test(file.name)) return;
+  const section = document.createElement('section');
+  section.className = 'exif-section';
+  const heading = document.createElement('h3');
+  heading.textContent = '照片信息 · EXIF';
+  const status = document.createElement('p');
+  status.textContent = '正在读取照片信息…';
+  section.append(heading, status);
+  infoContent.append(section);
+  try {
+    const [bytes, exifr] = await Promise.all([readHead(file.url, file.size, 512 * 1024, operation.signal), import('exifr')]);
+    const parseExif = exifr.parse || exifr.default.parse;
+    const tags = await parseExif(bytes, { pick: ['Make', 'Model', 'LensModel', 'DateTimeOriginal', 'ISO', 'FNumber', 'ExposureTime', 'FocalLength', 'PixelXDimension', 'PixelYDimension', 'ImageWidth', 'ImageHeight'] });
+    if (operation.signal.aborted || currentPreview !== file) return;
+    const list = document.createElement('dl');
+    list.className = 'metadata-list';
+    if (tags) {
+      infoRow(list, '相机', [tags.Make, tags.Model].filter(Boolean).join(' '));
+      infoRow(list, '镜头', tags.LensModel);
+      infoRow(list, '拍摄时间', tags.DateTimeOriginal);
+      infoRow(list, '感光度', tags.ISO);
+      infoRow(list, '光圈', tags.FNumber ? `f/${tags.FNumber}` : undefined);
+      infoRow(list, '曝光时间', tags.ExposureTime ? `${tags.ExposureTime} 秒` : undefined);
+      infoRow(list, '焦距', tags.FocalLength ? `${tags.FocalLength} mm` : undefined);
+      const width = tags.PixelXDimension || tags.ImageWidth;
+      const height = tags.PixelYDimension || tags.ImageHeight;
+      infoRow(list, '尺寸', width && height ? `${width} × ${height}` : undefined);
+    }
+    if (list.childElementCount) status.replaceWith(list);
+    else status.textContent = '没有找到可显示的照片信息。';
+  } catch {
+    if (!operation.signal.aborted) status.textContent = '未能读取照片信息，部分格式或文件头超出读取范围。';
+  }
+}
+
+function clearMarkdownToc(): void {
+  markdownOutline?.destroy();
+  markdownOutline = undefined;
+}
+
+function setupMarkdownToc(): void {
+  clearMarkdownToc();
+  if (!markdownTocSetting.checked || !currentPreview || !/\.(md|markdown)$/i.test(currentPreview.name)) return;
+  markdownOutline = new MarkdownOutline(viewerHost, preview, toc, tocList);
+  markdownOutline.mount();
+}
+
+function showError(message: string): void {
+  welcome.hidden = true;
+  preview.hidden = false;
+  loading.hidden = true;
+  errorMessage.textContent = message;
+  errorBox.hidden = false;
+}
+
+function onViewerState(state: ViewerState, sourceGeneration: number): void {
+  if (!isPreviewing || sourceGeneration !== generation) return;
+  loading.hidden = !state.loading;
+  if (state.error) {
+    const message = state.error instanceof Error ? state.error.message : String(state.error);
+    const file = currentPreview;
+    if (!file || /\b404\b|not found/i.test(message)) showError(message);
+    else queueMicrotask(() => {
+      if (isPreviewing && sourceGeneration === generation && currentPreview === file) showMetadataFallback(file, '内容暂时无法预览，以下是文件信息。');
+    });
+  } else {
+    errorBox.hidden = true;
+  }
+  if (state.ready && !state.loading && lastReadyGeneration !== generation) {
+    lastReadyGeneration = generation;
+    window.slowLook.metric('content-ready');
+  }
+}
+
+function viewerOptions(renderers: ViewerOptions['renderers']): ViewerOptions {
+  return {
+    locale: 'zh-CN', theme: 'light', rendererMode: 'extend', renderers,
+    // The library ships a dedicated ZIP/XML worker; its default is disabled
+    // unless explicitly configured. Keep page DOM layout on the UI thread.
+    docx: { worker: true, renderYieldEveryMs: 8 },
+    pdf: { streaming: true, disableStream: true, disableAutoFetch: true },
+    text: textOptions(),
+    toolbar: { position: 'bottom-right', download: false, print: false, exportHtml: false },
+    search: { enabled: true },
+  };
+}
+
+function clarifySearchCount(mount: HTMLElement): void {
+  const style = document.createElement('style');
+  style.textContent = '.file-viewer-web-search-count::before{content:"匹配 ";font-weight:400}';
+  mount.shadowRoot?.append(style);
+}
+
+async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, signal: AbortSignal, archiveOwner = currentPreview): Promise<(() => void) | undefined> {
+  if (/\.(docx|xlsx|pptx)$/i.test(name) && blob.size >= 8) {
+    const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+    if (signal.aborted) return undefined;
+    if ([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((byte, index) => head[index] === byte)) {
+      const owner = archiveOwner;
+      if (!owner) throw new Error('预览已经关闭。');
+      let previousError = '';
+      let bytes: ArrayBuffer | undefined;
+      while (!signal.aborted) {
+        const password = await requestPassword(target, name, signal, previousError);
+        if (password === null) {
+          if (!signal.aborted) { const note = document.createElement('p'); note.className = 'zip-empty'; note.textContent = '已取消打开加密文档。'; target.replaceChildren(note); }
+          return undefined;
+        }
+        bytes ??= await blob.arrayBuffer();
+        const result = await contentTask({ url: owner.url, kind: 'office-data', password, data: bytes }, signal);
+        if (signal.aborted) return undefined;
+        if (result.ok && result.bytes) return await renderZipEntry(name, new Blob([result.bytes]), target, signal, owner);
+        if (result.code !== 'password') throw new Error(result.message || '无法解密此文档。');
+        previousError = result.message || '密码不正确，请重试。';
+      }
+      return undefined;
+    }
+  }
+  const kind = mediaKind(name);
+  if (kind) {
+    const url = URL.createObjectURL(blob);
+    const { wrapper, player, dispose: disposeVisual } = createMediaView({ name, size: blob.size, url }, kind);
+    target.replaceChildren(wrapper);
+    player.addEventListener('loadedmetadata', () => { if (!signal.aborted && autoplaySetting.checked) void player.play().catch(() => undefined); }, { once: true });
+    let disposed = false;
+    const dispose = (): void => { if (!disposed) { disposed = true; disposeVisual(); player.pause(); player.removeAttribute('src'); player.load(); URL.revokeObjectURL(url); } };
+    if (signal.aborted) { dispose(); return undefined; }
+    signal.addEventListener('abort', dispose, { once: true });
+    return () => { signal.removeEventListener('abort', dispose); dispose(); };
+  }
+  const { viewer, renderers } = await loadModules(name);
+  if (signal.aborted) return undefined;
+  viewer.setDefaultFullAssetBaseUrl('/file-viewer/');
+  const mount = document.createElement('div'); mount.className = 'viewer-root'; target.replaceChildren(mount);
+  const nested = viewer.mountViewer(mount, { options: viewerOptions(renderers) });
+  nestedControllers.add(nested);
+  clarifySearchCount(mount);
+  // A non-passive wheel listener makes Chromium wait for JavaScript before
+  // scrolling. Documents inside large archives must not have one attached.
+  const removeWheel = /\.(?:png|jpe?g|gif|webp|bmp|avif|svg|ico|tiff?|heic|heif|psd)$/i.test(name)
+    ? installImageWheelZoom(target, () => nested) : () => undefined;
+  let disposed = false;
+  const dispose = (): void => { if (!disposed) { disposed = true; nestedControllers.delete(nested); removeWheel(); nested.destroy(); } };
+  signal.addEventListener('abort', dispose, { once: true });
+  try {
+    await nested.load({ file: new File([blob], name), filename: name, size: blob.size });
+    if (signal.aborted) { dispose(); return undefined; }
+    return () => { signal.removeEventListener('abort', dispose); dispose(); };
+  } catch (error) {
+    signal.removeEventListener('abort', dispose); dispose(); throw error;
+  }
+}
+
+async function contentTask(request: ContentRequest, signal: AbortSignal): Promise<ContentResponse> {
+  if (signal.aborted) return { ok: false, code: 'cancelled', message: '预览已取消。' };
+  const abort = (): void => window.slowLook.cancelContent(request.url);
+  signal.addEventListener('abort', abort, { once: true });
+  try { return await window.slowLook.contentTask(request); }
+  finally { signal.removeEventListener('abort', abort); }
+}
+
+async function previewEncryptedOffice(file: PreviewFile, current: number, operation: AbortController): Promise<void> {
+  loading.hidden = true;
+  if (file.size > 64 * 1024 * 1024) {
+    showMetadataFallback(file, '加密 Office 文件超过 64 MiB 预览上限。');
+    return;
+  }
+  let previousError = '';
+  while (current === generation && !operation.signal.aborted) {
+    const password = await requestPassword(viewerHost, file.name, operation.signal, previousError);
+    if (password === null) {
+      if (!operation.signal.aborted && current === generation) showMetadataFallback(file, '已取消打开加密文档。');
+      return;
+    }
+    loading.hidden = false; resetLoading('正在解密文档');
+    const result = await contentTask({ url: file.url, kind: 'office', password }, operation.signal);
+    if (operation.signal.aborted || current !== generation) return;
+    if (!result.ok || !result.bytes) {
+      loading.hidden = true;
+      if (result.code === 'password') { previousError = result.message || '密码不正确，请重试。'; continue; }
+      showMetadataFallback(file, result.message || '无法解密此文档。'); return;
+    }
+    resetLoading('正在解析解密后的文档');
+    const cleanup = await renderZipEntry(file.name, new Blob([result.bytes]), viewerHost, operation.signal);
+    if (operation.signal.aborted || current !== generation) { cleanup?.(); return; }
+    disposeZip = cleanup;
+    loading.hidden = true;
+    if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
+    return;
+  }
+}
+
+/** Preview a folder child without promoting it to the outer window's file. */
+async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: AbortSignal, forceOffice = false, forceFlyfishImage = false): Promise<(() => void) | undefined> {
+  const disposeOnAbort = (dispose: () => void): (() => void) => {
+    let closed = false;
+    const stop = (): void => { if (!closed) { closed = true; dispose(); } };
+    if (signal.aborted) stop(); else signal.addEventListener('abort', stop, { once: true });
+    return () => { signal.removeEventListener('abort', stop); stop(); };
+  };
+  const archiveEntry = (name: string, blob: Blob, mount: HTMLElement, childSignal: AbortSignal) => renderZipEntry(name, blob, mount, childSignal, file);
+  if (/\.(zip|rar)$/i.test(file.name)) {
+    const cleanup = /\.zip$/i.test(file.name)
+      ? mountZipPreview(target, file, () => undefined, archiveEntry)
+      : mountRarPreview(target, file, () => undefined, archiveEntry, contentTask);
+    return disposeOnAbort(cleanup);
+  }
+  if (supportsBrowserImage(file.name) && !forceFlyfishImage) {
+    let fallback: (() => void) | undefined;
+    let cleanup = mountBrowserImage(target, file.url, () => undefined, () => {
+      if (signal.aborted) return;
+      cleanup();
+      target.textContent = '正在尝试其他图片预览方式…';
+      void renderFolderFile(file, target, signal, forceOffice, true).then((dispose) => {
+        fallback = dispose; if (signal.aborted) dispose?.();
+      }).catch(() => {
+        if (signal.aborted) return;
+        const card = document.createElement('div'); card.className = 'metadata-fallback';
+        const contents = document.createElement('div'); contents.className = 'metadata-card';
+        const heading = document.createElement('h2'); heading.textContent = file.name;
+        const note = document.createElement('p'); note.textContent = '图片无法解码，显示文件信息。';
+        contents.append(heading, note, fileInfoDetails(file)); card.append(contents); target.replaceChildren(card);
+      });
+    });
+    return disposeOnAbort(() => { cleanup(); fallback?.(); });
+  }
+  const kind = mediaKind(file.name);
+  if (kind) {
+    const { wrapper, player, dispose } = createMediaView(file, kind); target.replaceChildren(wrapper);
+    player.addEventListener('loadedmetadata', () => { if (!signal.aborted && autoplaySetting.checked) void player.play().catch(() => undefined); }, { once: true });
+    return disposeOnAbort(() => { dispose(); player.pause(); player.removeAttribute('src'); player.load(); });
+  }
+  if (/\.(docx|xlsx|pptx)$/i.test(file.name)) {
+    const head = await readHead(file.url, file.size, 8, signal);
+    if (signal.aborted) return undefined;
+    if ([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((byte, index) => head[index] === byte)) {
+      if (file.size > 64 * 1024 * 1024) throw new Error('加密 Office 文件超过 64 MiB 预览上限。');
+      let error = '';
+      while (!signal.aborted) {
+        const password = await requestPassword(target, file.name, signal, error);
+        if (password === null) return undefined;
+        const result = await contentTask({ url: file.url, kind: 'office', password }, signal);
+        if (signal.aborted) return undefined;
+        if (result.ok && result.bytes) return renderZipEntry(file.name, new Blob([result.bytes]), target, signal, file);
+        if (result.code !== 'password') throw new Error(result.message || '无法解密此文档。');
+        error = result.message || '密码不正确，请重试。';
+      }
+      return undefined;
+    }
+    if (file.size > 128 * 1024 * 1024 && !forceOffice) {
+      let nested: (() => void) | undefined;
+      const cleanup = mountZipPreview(target, file, () => undefined, archiveEntry, { label: 'OFFICE STRUCTURE', fullPreview: () => {
+        cleanup();
+        void renderFolderFile(file, target, signal, true).then((dispose) => { nested = dispose; if (signal.aborted) dispose?.(); }).catch((error) => {
+          if (!signal.aborted) { const note = document.createElement('p'); note.className = 'folder-detail-empty'; note.textContent = error instanceof Error ? error.message : '无法预览此文档。'; target.replaceChildren(note); }
+        });
+      } });
+      return disposeOnAbort(() => { cleanup(); nested?.(); });
+    }
+  }
+  let filename = file.name;
+  const core = await import('@file-viewer/core');
+  if (signal.aborted) return undefined;
+  const lower = file.name.toLowerCase();
+  const extension = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : '';
+  const definitions: readonly RendererDefinition[] = core.DEFAULT_RENDERER_DEFINITIONS;
+  const registered = definitions.some((definition) => definition.extensions.includes(extension) ||
+    definition.filenamePatterns?.some((pattern) => pattern.toLowerCase() === lower || (pattern.startsWith('*.') && lower.endsWith(pattern.slice(1).toLowerCase()))));
+  if (!registered || FORCE_INSPECTION_EXTENSIONS.includes(extension)) {
+    const head = await readHead(file.url, file.size, 8192, signal);
+    if (signal.aborted) return undefined;
+    if (isProbablyText(head)) filename = 'preview.txt';
+    else {
+      const card = document.createElement('div'); card.className = 'metadata-fallback';
+      const contents = document.createElement('div'); contents.className = 'metadata-card';
+      const heading = document.createElement('h2'); heading.textContent = file.name;
+      const note = document.createElement('p'); note.textContent = '暂不支持内容预览，显示文件信息。';
+      const hex = document.createElement('pre'); hex.className = 'metadata-hex'; hex.textContent = formatHexSample(head);
+      contents.append(heading, note, fileInfoDetails(file), hex); card.append(contents); target.replaceChildren(card);
+      return undefined;
+    }
+  }
+  if ((shouldPreviewTextInChunks(file) || (filename === 'preview.txt' && file.size > LARGE_TEXT_THRESHOLD))) {
+    const bytes = await readHead(file.url, file.size, LARGE_TEXT_CHUNK, signal);
+    if (signal.aborted) return undefined;
+    let value: string;
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) value = new TextDecoder('utf-16le').decode(bytes);
+    else if (bytes[0] === 0xfe && bytes[1] === 0xff) value = new TextDecoder('utf-16be').decode(bytes);
+    else {
+      try { value = new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true }); }
+      catch { value = new TextDecoder('gb18030').decode(bytes); }
+    }
+    const container = document.createElement('div'); container.className = 'folder-text-fragment';
+    const note = document.createElement('p'); note.textContent = `仅显示开头 ${formatSize(bytes.length)} · 总计 ${formatSize(file.size)}`;
+    const scroller = document.createElement('div'); scroller.className = 'large-text-scroll';
+    const gutter = document.createElement('div'); gutter.className = 'large-text-gutter'; gutter.setAttribute('aria-hidden', 'true');
+    const viewport = document.createElement('div'); viewport.className = 'large-text-gutter-viewport';
+    const numbers = document.createElement('div'); numbers.className = 'large-text-gutter-numbers'; viewport.append(numbers); gutter.append(viewport);
+    const text = document.createElement('pre'); text.id = 'large-text-content'; text.textContent = value;
+    scroller.append(gutter, text); container.append(note, scroller); target.replaceChildren(container);
+    let lineCount = 1; for (const character of value) if (character === '\n') lineCount += 1;
+    const update = (): void => {
+      gutter.hidden = !lineNumbersSetting.checked; scroller.classList.toggle('with-line-numbers', lineNumbersSetting.checked);
+      if (gutter.hidden) return;
+      const height = scroller.clientHeight || 400;
+      const first = Math.max(0, Math.floor((scroller.scrollTop - 20) / 21) - 1);
+      const last = Math.min(lineCount, first + Math.ceil(height / 21) + 3);
+      viewport.style.height = `${height}px`; numbers.style.transform = `translateY(${20 + first * 21 - scroller.scrollTop}px)`;
+      numbers.textContent = Array.from({ length: Math.max(0, last - first) }, (_, index) => String(first + index + 1)).join('\n');
+    };
+    scroller.addEventListener('scroll', update, { passive: true });
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : undefined;
+    observer?.observe(scroller); refreshFolderText = update; update();
+    return disposeOnAbort(() => { scroller.removeEventListener('scroll', update); observer?.disconnect(); if (refreshFolderText === update) refreshFolderText = undefined; });
+  }
+  const { viewer, renderers } = await loadModules(filename);
+  if (signal.aborted) return undefined;
+  viewer.setDefaultFullAssetBaseUrl('/file-viewer/');
+  const mount = document.createElement('div'); mount.className = 'viewer-root'; target.replaceChildren(mount);
+  const nested = viewer.mountViewer(mount, { options: viewerOptions(renderers) });
+  nestedControllers.add(nested);
+  clarifySearchCount(mount);
+  const removeWheel = /\.(?:png|jpe?g|gif|webp|bmp|avif|tiff?|heic|heif|psd|svg|ico)$/i.test(filename) ? installImageWheelZoom(target, () => nested) : () => undefined;
+  const cleanup = disposeOnAbort(() => { nestedControllers.delete(nested); removeWheel(); nested.destroy(); });
+  try { await nested.load({ url: file.url, filename, size: file.size }); if (signal.aborted) cleanup(); return cleanup; }
+  catch (error) { cleanup(); throw error; }
+}
+
+async function previewFile(file: PreviewFile): Promise<void> {
+  const current = ++generation;
+  isPreviewing = true;
+  currentPreview = file;
+  infoButton.hidden = false;
+  infoPanel.hidden = true;
+  nameLabel.textContent = file.name;
+  nameLabel.title = file.name;
+  sizeLabel.textContent = formatSize(file.size);
+  welcome.hidden = true;
+  preview.hidden = false;
+  loading.hidden = false;
+  errorBox.hidden = true;
+  resetLoading();
+  if (/\.lnk$/i.test(file.name)) {
+    showMetadataFallback(file, '这是一个快捷方式，显示它的文件信息和目标。');
+    return;
+  }
+  // ZIP uses range-based reads; RAR uses a seekable WASM worker.
+  if (/\.(zip|rar)$/i.test(file.name)) {
+    resetLoading('正在读取压缩包目录');
+    const ready = (): void => {
+      if (current !== generation) return;
+      loading.hidden = true;
+      if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
+    };
+    disposeZip = /\.zip$/i.test(file.name)
+      ? mountZipPreview(viewerHost, file, ready, renderZipEntry)
+      : mountRarPreview(viewerHost, file, ready, renderZipEntry, contentTask);
+    return;
+  }
+  if (supportsBrowserImage(file.name)) {
+    resetLoading('正在读取图片');
+    disposeZip = mountBrowserImage(viewerHost, file.url, () => {
+      if (current !== generation) return;
+      loading.hidden = true;
+      if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
+    }, () => {
+      if (current !== generation) return;
+      disposeZip?.(); disposeZip = undefined;
+      void loadFlyfish(file, current);
+    });
+    return;
+  }
+  const kind = mediaKind(file.name);
+  if (kind) {
+    resetLoading('正在准备播放');
+    showMedia(file, current, kind);
+    return;
+  }
+  if (shouldPreviewTextInChunks(file)) {
+    showLargeText(file, current, 'preview.txt');
+    return;
+  }
+  let operation: AbortController | undefined;
+  try {
+    if (/\.(docx|xlsx|pptx)$/i.test(file.name)) {
+      operation = new AbortController(); probeRead = operation;
+      const head = await readHead(file.url, file.size, 8, operation.signal);
+      if (current !== generation || operation.signal.aborted) return;
+      if ([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((byte, index) => head[index] === byte)) {
+        await previewEncryptedOffice(file, current, operation);
+        return;
+      }
+      if (probeRead === operation) probeRead = undefined;
+      operation = undefined;
+      if (file.size > 128 * 1024 * 1024) {
+        resetLoading('正在读取文档结构');
+        disposeZip = mountZipPreview(viewerHost, file, () => {
+          if (current !== generation) return;
+          loading.hidden = true;
+          if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
+        }, renderZipEntry, { label: 'OFFICE STRUCTURE', fullPreview: () => {
+          if (current !== generation) return;
+          disposeZip?.(); disposeZip = undefined; loading.hidden = false; resetLoading('正在读取完整文档');
+          void loadFlyfish(file, current);
+        } });
+        return;
+      }
+    }
+    const { DEFAULT_RENDERER_DEFINITIONS } = await import('@file-viewer/core');
+    if (current !== generation) return;
+    const lower = file.name.toLowerCase();
+    const extension = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : '';
+    const definitions: readonly RendererDefinition[] = DEFAULT_RENDERER_DEFINITIONS;
+    const registered = definitions.some((definition) => definition.extensions.includes(extension) ||
+      definition.filenamePatterns?.some((pattern) => pattern.toLowerCase() === lower || (pattern.startsWith('*.') && lower.endsWith(pattern.slice(1).toLowerCase()))));
+    const needsInspection = !registered || FORCE_INSPECTION_EXTENSIONS.includes(extension);
+    if (!needsInspection) { await loadFlyfish(file, current); return; }
+    operation = new AbortController();
+    probeRead = operation;
+    const bytes = await readHead(file.url, file.size, 8192, operation.signal);
+    if (current !== generation || operation.signal.aborted) return;
+    if (probeRead === operation) probeRead = undefined;
+    if (extension === 'url') {
+      const text = new TextDecoder().decode(bytes);
+      const target = /^URL=(.*)$/im.exec(text)?.[1]?.trim();
+      file.shortcut = { target };
+      showMetadataFallback(file, '这是一个网络快捷方式，显示它的文件信息和目标。');
+    } else if (isProbablyText(bytes)) {
+      if (file.size > LARGE_TEXT_THRESHOLD) showLargeText(file, current, 'preview.txt');
+      else await loadFlyfish(file, current, 'preview.txt');
+    } else showMetadataFallback(file, '暂不支持此文件的内容预览，以下是文件信息和文件头。', bytes);
+  } catch (error) {
+    if (current === generation && !operation?.signal.aborted) showMetadataFallback(file, '内容暂时无法读取，以下是文件信息。');
+  } finally {
+    if (probeRead === operation) probeRead = undefined;
+  }
+}
+
+async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = file.name): Promise<void> {
+  try {
+    removeMainImageWheel?.(); removeMainImageWheel = undefined;
+    if (/\.(?:png|jpe?g|gif|webp|bmp|avif|svg|ico|tiff?|heic|heif|psd)$/i.test(viewerFilename)) {
+      removeMainImageWheel = installImageWheelZoom(viewerHost, () => controller);
+    }
+    const { viewer, renderers } = await loadModules(viewerFilename);
+    if (current !== generation) return;
+    if (!controller) {
+      viewer.setDefaultFullAssetBaseUrl('/file-viewer/');
+      const mountRoot = document.createElement('div');
+      mountRoot.className = 'viewer-root';
+      viewerHost.replaceChildren(mountRoot);
+      controller = viewer.mountViewer(mountRoot, {
+        options: viewerOptions(renderers),
+      });
+      clarifySearchCount(mountRoot);
+      controller.subscribe((state) => onViewerState(state, current));
+    }
+    await controller.load({ url: file.url, filename: viewerFilename, size: file.size });
+    if (current === generation) setupMarkdownToc();
+  } catch (error) {
+    if (current === generation) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/\b404\b|not found/i.test(message)) showError(message);
+      else showMetadataFallback(file, '内容暂时无法预览，以下是文件信息。');
+    }
+  }
+}
+
+function clearPreview(): void {
+  generation += 1;
+  isPreviewing = false;
+  currentPreview = undefined;
+  infoButton.hidden = true;
+  infoPanel.hidden = true;
+  clearMarkdownToc();
+  clearFolder();
+  stopProbe();
+  stopTextRead();
+  clearLargeText();
+  stopMedia();
+  controller?.destroy();
+  controller = undefined;
+  viewerHost.replaceChildren();
+  nameLabel.textContent = '';
+  sizeLabel.textContent = '';
+  loading.hidden = true;
+  errorBox.hidden = true;
+  preview.hidden = true;
+  welcome.hidden = false;
+}
+
+window.slowLook.onStart((file) => {
+  generation += 1;
+  isPreviewing = false;
+  currentPreview = undefined;
+  infoButton.hidden = true;
+  infoPanel.hidden = true;
+  clearMarkdownToc();
+  clearFolder();
+  stopProbe();
+  stopTextRead();
+  clearLargeText();
+  stopMedia();
+  controller?.destroy();
+  controller = undefined;
+  viewerHost.replaceChildren();
+  nameLabel.textContent = file.name;
+  sizeLabel.textContent = '';
+  welcome.hidden = true;
+  preview.hidden = false;
+  errorBox.hidden = true;
+  loading.hidden = false;
+  resetLoading();
+  if (document.hasFocus()) preview.focus({ preventScroll: true });
+});
+window.slowLook.onPreview((file) => { void previewFile(file); });
+window.slowLook.onDirectory((folder) => {
+  const current = ++generation;
+  isPreviewing = true;
+  currentPreview = undefined;
+  nameLabel.textContent = folder.name;
+  nameLabel.title = folder.path;
+  sizeLabel.textContent = '文件夹';
+  welcome.hidden = true;
+  preview.hidden = false;
+  errorBox.hidden = true;
+  loading.hidden = false;
+  resetLoading('正在读取文件夹');
+  folderView = mountFolderPreview(viewerHost, folder, window.slowLook.readDirectory, () => {
+    if (current !== generation) return;
+    loading.hidden = true;
+    if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
+  }, { open: window.slowLook.openDirectoryFile, render: renderFolderFile, release: () => window.slowLook.releaseDirectoryPreview(folder.id) },
+  { inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
+});
+window.slowLook.onClear(clearPreview);
+window.slowLook.onProgress((progress) => {
+  if (!isPreviewing || loading.hidden) return;
+  if (progress.phase === 'reading' && progress.total && progress.total > 0) {
+    const loaded = Math.min(progress.loaded || 0, progress.total);
+    loadingLabel.textContent = '正在读取文件';
+    loadingDetail.textContent = `${formatSize(loaded)} / ${formatSize(progress.total)}`;
+    loadingProgress.value = loaded / progress.total * 100;
+    loadingProgress.hidden = false;
+  } else {
+    loadingLabel.textContent = progress.phase === 'parsing' ? '正在解析文件' : '正在按需读取文件';
+    loadingDetail.textContent = '解析时间取决于文件大小和格式';
+    loadingProgress.hidden = true;
+  }
+});
+window.slowLook.onIntegrationStatus((message) => {
+  const status = element('#integration-status');
+  status.textContent = message ? `${message} ` : '';
+  element('#integration-current-status').textContent = message || '等待文件管理器操作';
+});
+window.slowLook.onError((message) => {
+  generation += 1;
+  isPreviewing = false;
+  currentPreview = undefined;
+  infoButton.hidden = true;
+  infoPanel.hidden = true;
+  clearMarkdownToc();
+  clearFolder();
+  stopProbe();
+  stopTextRead();
+  clearLargeText();
+  stopMedia();
+  controller?.destroy();
+  controller = undefined;
+  viewerHost.replaceChildren();
+  showError(message);
+});
+element('#choose').addEventListener('click', () => { void window.slowLook.selectFile(); });
+element('#choose-welcome').addEventListener('click', () => { void window.slowLook.selectFile(); });
+element('#choose-folder').addEventListener('click', () => { void window.slowLook.selectFolder(); });
+element('#close').addEventListener('click', () => window.slowLook.hide());
+infoButton.addEventListener('click', () => {
+  if (!infoPanel.hidden) { infoPanel.hidden = true; return; }
+  if (currentPreview) void showFileInfo(currentPreview);
+});
+element('#file-info-close').addEventListener('click', () => { infoPanel.hidden = true; infoButton.focus(); });
+element('#settings-open').addEventListener('click', () => {
+  settingsPanel.hidden = false;
+  element('[role="tab"][aria-selected="true"]').focus();
+});
+for (const button of document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')) {
+  button.addEventListener('click', () => {
+    for (const tab of document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')) {
+      const selected = tab === button;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    }
+    for (const group of document.querySelectorAll<HTMLElement>('[data-settings-group]')) group.hidden = group.dataset.settingsGroup !== button.dataset.settingsTab;
+  });
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]'));
+    const next = tabs[(tabs.indexOf(button) + (event.key === 'ArrowDown' ? 1 : tabs.length - 1)) % tabs.length];
+    next.click();
+    next.focus();
+  });
+}
+element('#settings-close').addEventListener('click', () => {
+  settingsPanel.hidden = true;
+  element('#settings-open').focus();
+});
+settingsPanel.addEventListener('click', (event) => {
+  if (event.target === settingsPanel) settingsPanel.hidden = true;
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!settingsPanel.hidden) {
+    if (event.key === 'Escape') { event.preventDefault(); settingsPanel.hidden = true; element('#settings-open').focus(); }
+    return;
+  }
+  if (event.key === 'Escape' && !infoPanel.hidden) {
+    event.preventDefault();
+    infoPanel.hidden = true;
+    infoButton.focus();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
+    event.preventDefault();
+    void window.slowLook.selectFile();
+    return;
+  }
+  const interacting = event.composedPath().some((target) => target instanceof HTMLElement && (
+    target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'VIDEO', 'AUDIO'].includes(target.tagName) || target.getAttribute('role') === 'button'
+  ));
+  const navigationInteracting = event.composedPath().some((target) => target instanceof HTMLElement && (
+    target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO', 'AUDIO'].includes(target.tagName) ||
+    ['textbox', 'slider', 'spinbutton'].includes(target.getAttribute('role') || '') || Boolean(target.closest('.folder-browser'))
+  ));
+  if (navigationSetting.checked && isPreviewing && !navigationInteracting && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey &&
+      ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    event.preventDefault();
+    window.slowLook.navigate(event.key);
+    return;
+  }
+  if (event.key === 'Escape' || (event.code === 'Space' && !interacting && !event.repeat)) {
+    event.preventDefault();
+    window.slowLook.hide();
+  }
+});
+
+document.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  if (event.dataTransfer?.types.includes('Files')) dragOverlay.hidden = false;
+});
+document.addEventListener('dragleave', (event) => {
+  if (!event.relatedTarget) dragOverlay.hidden = true;
+});
+document.addEventListener('drop', (event) => {
+  event.preventDefault();
+  dragOverlay.hidden = true;
+  const file = event.dataTransfer?.files[0];
+  if (file) void window.slowLook.openDroppedFile(file);
+});
+
+// Warm the rendering modules while the empty window remains responsive.
+window.setTimeout(() => { void loadViewer().catch(() => undefined); }, 300);

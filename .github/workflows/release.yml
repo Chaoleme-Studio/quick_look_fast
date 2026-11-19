@@ -1,0 +1,150 @@
+name: Build release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.id }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows x64 portable
+    runs-on: windows-latest
+    steps:
+      - name: Check out released tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build application
+        run: npm run build
+      - name: Capture documentation screenshots from synthetic files
+        id: screenshots
+        continue-on-error: true
+        timeout-minutes: 3
+        run: npm run screenshots
+      - name: Save screenshots for documentation
+        if: steps.screenshots.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: documentation-screenshots
+          path: docs/screenshots/*.png
+          if-no-files-found: error
+          retention-days: 30
+      - name: Assemble portable application
+        run: node scripts/pack-portable.cjs
+      - name: Test source and packaged application
+        env:
+          SLOWLOOK_PORTABLE_DIST: artifacts/QuickLook-Fast-win-x64/resources/app/dist
+        run: npm test
+      - name: Create archive and checksum
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^[A-Za-z0-9._-]+$') { throw 'Release tag cannot be used as a filename.' }
+          $archive = "QuickLook-Fast-$env:RELEASE_TAG-windows-x64.zip"
+          Compress-Archive -LiteralPath artifacts/QuickLook-Fast-win-x64 -DestinationPath "artifacts/$archive" -CompressionLevel Fastest
+          $hash = (Get-FileHash -LiteralPath "artifacts/$archive" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "artifacts/$archive.sha256" -Value "$hash  $archive" -Encoding ascii
+          "ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Attach files to the published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$env:RELEASE_TAG" "artifacts/$env:ARCHIVE" "artifacts/$env:ARCHIVE.sha256" --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  linux:
+    name: Linux x64 portable (GNOME and KDE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/pack-portable.cjs
+      - name: Test source and packaged application
+        env:
+          SLOWLOOK_PORTABLE_DIST: artifacts/QuickLook-Fast-linux-x64/resources/app/dist
+        run: npm test
+      - name: Create archive and checksum
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
+          archive="QuickLook-Fast-$RELEASE_TAG-linux-x64.tar.gz"
+          tar -C artifacts -czf "artifacts/$archive" QuickLook-Fast-linux-x64
+          (cd artifacts && sha256sum "$archive" > "$archive.sha256")
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Attach files to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" "artifacts/$ARCHIVE" "artifacts/$ARCHIVE.sha256" --clobber
+
+  macos:
+    name: macOS arm64 portable
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/pack-portable.cjs
+      - name: Ad-hoc sign and verify bundle
+        run: |
+          codesign --force --deep --sign - "artifacts/QuickLook-Fast-mac-arm64/QuickLook Fast.app"
+          codesign --verify --deep --strict "artifacts/QuickLook-Fast-mac-arm64/QuickLook Fast.app"
+      - name: Smoke-test the bundled arm64 Electron executable
+        run: |
+          executable="artifacts/QuickLook-Fast-mac-arm64/QuickLook Fast.app/Contents/MacOS/QuickLook Fast"
+          actual="$(ELECTRON_RUN_AS_NODE=1 "$executable" -p 'process.versions.electron + ":" + process.arch')"
+          expected="$(node -p 'require("./package.json").devDependencies.electron + ":arm64"')"
+          [ "$actual" = "$expected" ] || { echo "Unexpected bundled runtime: $actual (expected $expected)"; exit 1; }
+          minimum="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "artifacts/QuickLook-Fast-mac-arm64/QuickLook Fast.app/Contents/Info.plist")"
+          [ "$minimum" = "26.0" ] || { echo "Unexpected minimum macOS: $minimum"; exit 1; }
+      - name: Test source and packaged application
+        env:
+          SLOWLOOK_PORTABLE_DIST: artifacts/QuickLook-Fast-mac-arm64/QuickLook Fast.app/Contents/Resources/app/dist
+        run: npm test
+      - name: Create archive and checksum
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
+          archive="QuickLook-Fast-$RELEASE_TAG-macos-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent artifacts/QuickLook-Fast-mac-arm64 "artifacts/$archive"
+          (cd artifacts && shasum -a 256 "$archive" > "$archive.sha256")
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Attach files to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" "artifacts/$ARCHIVE" "artifacts/$ARCHIVE.sha256" --clobber
