@@ -6,7 +6,7 @@
 
 QuickLook Fast 是离线优先的桌面文件预览工具。在文件管理器中选中文件，按空格即可查看，再按空格或 Esc 收起。它以前叫 SlowLook，基于 Electron、Chromium、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 开发。感谢 Flyfish 团队和所有开源贡献者。
 
-项目仍处于 **0.1.1 早期版本**。不同系统的文件管理器接入方式、文件格式和还原质量有差异，详见下文。
+项目仍处于 **0.1.2 早期版本**。不同系统的文件管理器接入方式、文件格式和还原质量有差异，详见下文。
 
 ## 下载与启动
 
@@ -64,7 +64,13 @@ Flyfish 是本项目的上游渲染组件，不是需要同时启动的另一个
 
 <!-- screenshots:start -->
 
-真实应用截图尚待生成。在可启动 Electron 的桌面执行 `npm run build` 和 `npm run screenshots`，检查图片后提交。
+| 文件夹与内容预览 | PDF 预览 |
+| --- | --- |
+| ![文件夹预览](docs/screenshots/folder.png) | ![PDF 预览](docs/screenshots/pdf.png) |
+
+| 设置 | 欢迎页 |
+| --- | --- |
+| ![设置](docs/screenshots/settings.png) | ![欢迎页](docs/screenshots/welcome.png) |
 
 <!-- screenshots:end -->
 

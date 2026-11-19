@@ -60,13 +60,13 @@
 | 关于中显示 www.chaoleme.cn，README 感谢 Flyfish | 已写入设置及 README；外链受固定白名单限制。 |
 | 安装图标采用用户指定的紫瞳图片 | 代码／资源：已裁成方形并生成 PNG、ICO、ICNS 和托盘图；实际系统图标显示待验证。源图由用户提供，发布前自行确认使用权。 |
 | README、全部 docs 重写并保留能力/限制/架构 | 文档已按当前代码整理；历史调研保留在参考报告。 |
-| README 必须有文件夹、PDF、PPT 等真实截图且无私密资料 | 未完成：Electron 与浏览器图形进程被环境 ACL 阻止。截图脚本只使用合成示例和公开 PPT；正常桌面运行后会更新 README 截图区域，仍需检查成图。 |
-| Release 才触发 Action，Windows x64、macOS arm64、Linux 支持 GNOME/KDE | 代码／模拟：三个作业和打包结构已配置，未在 GitHub 与目标系统端到端验收。macOS 未公证；Linux 的桌面入口有各自配置。 |
+| README 必须有文件夹、PDF、PPT 等真实截图且无私密资料 | 部分完成：GitHub Windows 实际渲染的文件夹、PDF、设置和欢迎页已入库，使用合成数据；PPT 截图曾截到加载画面，修复等待后需再次检查。 |
+| Release 才触发 Action，Windows x64、macOS arm64、Linux 支持 GNOME/KDE | 构建通过：0.1.1 三平台作业、测试及归档上传成功；macOS 未公证，真实桌面集成仍需验收。 |
 | 输出 V11 便携包 | 本地构建迭代名为 `SlowLook-win-x64-v11`；项目语义版本仍为 0.1.0。 |
 | 调研 12 个参考项目、评估优缺点并借鉴 | 已整理：[参考项目复盘](references.md)；Octopus 单列在[平台记录](platforms.md)。 |
 | Vite / pnpm / Tailwind 及模块化 | Vite 与 npm 已使用，pnpm/Tailwind 未引入；主入口仍有拆分空间。[工具链](compatibility.md) |
 | 整理忽略规则、构建目录、测试脚本和文档 | 已分类：构建脚本、测试与截图/图标工具分开；生成物不进仓库。文档合并后仍保留历史调研和本清单。 |
-| Mac arm64 实际打包并启动测试 | 未完成：当前 Windows 无 macOS 主机和 macOS Electron 运行时；包结构有模拟测试，Release 工作流具备 macOS 构建与临时签名，仍须真实执行。 |
+| Mac arm64 实际打包并启动测试 | 部分完成：GitHub macOS 26 arm64 作业已打包、临时签名并以 Node 模式运行包内 Electron；Finder、窗口和交互尚未在真实桌面验收。 |
 | 找回旧版音频波形样式 | 现存 v8、v9、v10、v11 便携包主界面均为音符图标，没有更早源码或 Git 历史，无法确认用户记忆中的版本；已重新实现可拖动波形。 |
 
 ## 新会话建议验收顺序

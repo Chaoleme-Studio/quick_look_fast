@@ -74,6 +74,7 @@ app.whenReady().then(async () => {
   const window = new BrowserWindow({ width: 1080, height: 760, show: false, frame: false, backgroundColor: '#11141b',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   await window.loadURL('slowlook://app/index.html');
+  window.showInactive();
   const waitFor = (expression) => window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
     const start = Date.now(); const check = () => { try { if (${expression}) return resolve(); } catch {}
       if (Date.now() - start > 45000) return reject(Error('Screenshot preview timed out: ${expression.replaceAll("'", "")}'));
@@ -81,6 +82,11 @@ app.whenReady().then(async () => {
   })`);
   const capture = async (name) => {
     await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    // Hidden Electron windows can return the preceding compositor frame even
+    // after a DOM update. Allow the new document's frame to be presented.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await window.capturePage(); // Flush a possibly stale compositor frame.
+    await new Promise((resolve) => setTimeout(resolve, 250));
     const image = await window.capturePage(); if (image.isEmpty()) throw new Error('Electron returned an empty screenshot');
     fs.writeFileSync(path.join(output, name), image.toPNG()); console.log(`Saved ${name}`);
   };
@@ -97,7 +103,9 @@ app.whenReady().then(async () => {
   await capture('folder.png');
   for (const [id, name] of [['sample-pdf', 'pdf.png'], ['sample-pptx', 'pptx.png']]) {
     const info = fileInfo(id); window.webContents.send('capture-start', { name: info.name }); window.webContents.send('capture-preview', info);
+    await waitFor(`document.querySelector('#file-name')?.textContent === ${JSON.stringify(info.name)}`);
     await waitFor("document.querySelector('#loading').hidden && document.querySelector('#error').hidden && document.querySelector('#viewer .viewer-root')?.shadowRoot?.childElementCount");
+    if (id === 'sample-pdf') await waitFor("document.querySelector('#viewer .viewer-root')?.shadowRoot?.querySelector('.textLayer')?.textContent.includes('QuickLook Fast')");
     if (id === 'sample-pptx') await waitFor("document.querySelector('#viewer .viewer-root')?.shadowRoot?.querySelector('.flyfish-pptx-content')?.dataset.renderState === 'ready'");
     await capture(name);
   }
