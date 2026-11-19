@@ -1,7 +1,7 @@
 {
   "name": "quicklook-fast",
   "productName": "QuickLook Fast",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "Apache-2.0",
   "author": "Chaoleme Studio",
@@ -12,11 +12,12 @@
     "start": "electron .",
     "build": "npm run build:native && npm run typecheck && vite build && node scripts/patch-flyfish-pptx.cjs && node scripts/patch-flyfish-docx.cjs && tsc -p tsconfig.electron.json",
     "build:native": "node scripts/build-native.cjs",
+    "electron:install": "install-electron --no",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsc -p tsconfig.electron.json && node --test tests/*.test.cjs tests/*.test.mjs && node tests/run-native.cjs",
     "screenshots": "electron tools/screenshots/capture.cjs",
     "benchmark:file": "node tests/benchmark-file-service.cjs",
-    "dist:win": "npm run build && node scripts/pack-portable.cjs"
+    "dist:win": "npm run electron:install && npm run build && node scripts/pack-portable.cjs"
   },
   "dependencies": {
     "@file-viewer/core": "3.3.4",
