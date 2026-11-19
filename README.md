@@ -72,6 +72,8 @@ Flyfish 是本项目的上游渲染组件，不是需要同时启动的另一个
 | --- | --- |
 | ![设置](docs/screenshots/settings.png) | ![欢迎页](docs/screenshots/welcome.png) |
 
+![PPTX 预览](docs/screenshots/pptx.png)
+
 <!-- screenshots:end -->
 
 截图脚本使用合成目录、合成 PDF 和公开 PPTX 样本，不读取真实工作文档。[截图说明](docs/screenshots/README.md)

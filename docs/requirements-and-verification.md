@@ -60,7 +60,7 @@
 | 关于中显示 www.chaoleme.cn，README 感谢 Flyfish | 已写入设置及 README；外链受固定白名单限制。 |
 | 安装图标采用用户指定的紫瞳图片 | 代码／资源：已裁成方形并生成 PNG、ICO、ICNS 和托盘图；实际系统图标显示待验证。源图由用户提供，发布前自行确认使用权。 |
 | README、全部 docs 重写并保留能力/限制/架构 | 文档已按当前代码整理；历史调研保留在参考报告。 |
-| README 必须有文件夹、PDF、PPT 等真实截图且无私密资料 | 部分完成：GitHub Windows 实际渲染的文件夹、PDF、设置和欢迎页已入库，使用合成数据；PPT 截图曾截到加载画面，修复等待后需再次检查。 |
+| README 必须有文件夹、PDF、PPT 等真实截图且无私密资料 | 已完成：GitHub Windows 实际渲染的文件夹、PDF、PPT、设置和欢迎页已核验并入库，使用合成数据与公开 PPT 样本。 |
 | Release 才触发 Action，Windows x64、macOS arm64、Linux 支持 GNOME/KDE | 构建通过：0.1.1 三平台作业、测试及归档上传成功；macOS 未公证，真实桌面集成仍需验收。 |
 | 输出 V11 便携包 | 本地构建迭代名为 `SlowLook-win-x64-v11`；项目语义版本仍为 0.1.0。 |
 | 调研 12 个参考项目、评估优缺点并借鉴 | 已整理：[参考项目复盘](references.md)；Octopus 单列在[平台记录](platforms.md)。 |
