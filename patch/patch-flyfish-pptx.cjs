@@ -13,7 +13,7 @@ if (version !== '3.3.4') throw new Error(`Reassess the PPTX inset patch for Flyf
 const worker = path.join(root, 'build', 'dist', 'file-viewer', 'vendor', 'pptx', 'pptx.worker.js');
 let source = fs.readFileSync(worker, 'utf8');
 const marker = 'function __slowLookPptxInset(';
-const notice = '/* QuickLook Fast modified this Flyfish PPTX Worker: text, progressive styles, gradient stops, arrows and chart metadata; see THIRD_PARTY.md and patch/patch-flyfish-pptx.cjs. */\n';
+const notice = '/* QuickLook Fast modified this Flyfish PPTX Worker: text, progressive styles, shape geometry, gradients and chart metadata; see THIRD_PARTY.md and patch/patch-flyfish-pptx.cjs. */\n';
 const expression = /"box-sizing:border-box;padding:"\+([\w$]+)\(([\w$]+)\.top,"y",([\w$]+)\)\+"px "\+\1\(\2\.right,"x",\3\)\+"px "\+\1\(\2\.bottom,"y",\3\)\+"px "\+\1\(\2\.left,"x",\3\)\+"px;"/g;
 if (!source.includes(marker)) {
   const matches = [...source.matchAll(expression)];
@@ -83,14 +83,15 @@ if (!source.includes('function __slowLookGradientOffset(')) {
   source = 'function __slowLookGradientOffset(p,i,n){var v=p&&p[i];return Number.isFinite(v)?Math.max(0,Math.min(1,v)):n>1?i/(n-1):0}function __slowLookGradientCss(p,i,n){return " "+(__slowLookGradientOffset(p,i,n)*100)+"%"}\n' + source;
 }
 
-// qu() already rotates the DrawingML angle by 90 degrees for CSS. The SVG
-// gradient helper uses a different coordinate convention: adding another 90
-// reverses both ends (a 0-degree left border appears on the right).
+// qu() converts DrawingML angles for CSS. The SVG helper uses an upward Y
+// axis, so translate the angle and reverse its sign for SVG's downward Y axis.
 const reversedGradient = 'pe=ee.rot+90,Y=Bk(u,h,pe,Ee,b,ee.pos)';
-const correctGradient = 'pe=ee.rot-90,Y=Bk(u,h,pe,Ee,b,ee.pos)';
+const priorGradient = 'pe=ee.rot-90,Y=Bk(u,h,pe,Ee,b,ee.pos)';
+const correctGradient = 'pe=90-ee.rot,Y=Bk(u,h,pe,Ee,b,ee.pos)';
 if (!source.includes(correctGradient)) {
-  if (source.split(reversedGradient).length !== 2) throw new Error('The Flyfish SVG gradient direction changed; reassess this repair.');
-  source = source.replace(reversedGradient, correctGradient);
+  const target = source.split(reversedGradient).length === 2 ? reversedGradient : priorGradient;
+  if (source.split(target).length !== 2) throw new Error('The Flyfish SVG gradient direction changed; reassess this repair.');
+  source = source.replace(target, correctGradient);
 }
 
 // The default DrawingML arrowhead is half the shorter side, not half the
@@ -107,6 +108,35 @@ if (!source.includes('/* __slowLookArrowGeometry */')) {
     source = source.replace(before, after);
   }
   source = '/* __slowLookArrowGeometry */\n' + source;
+}
+
+// DrawingML uses the shorter side for preset corner and skew adjustments.
+// Scaling the adjustment separately by width and height stretches rounded
+// corners and makes a wide, shallow parallelogram excessively slanted.
+if (!source.includes('function __slowLookRoundRect(')) {
+  const roundedCall = 'var ze=Ag(u,h,je,et,B0,D0);';
+  const parallelogram = 'U1=.25,H1;if(u>h?H1=u/h:H1=h/u,ye!==void 0){var A5=parseInt(ye.substr(4))/1e5;U1=A5/H1}';
+  const correctedParallelogram = 'U1=.25*Math.min(u,h)/Math.max(u,Number.EPSILON),H1;if(u>h?H1=u/h:H1=h/u,ye!==void 0){var A5=parseInt(ye.substr(4))/1e5;U1=Math.max(0,Math.min(1,A5*Math.min(u,h)/Math.max(u,Number.EPSILON)))}';
+  for (const target of [roundedCall, parallelogram]) {
+    if (source.split(target).length !== 2) throw new Error('The Flyfish PPTX preset geometry changed; reassess corner and skew dimensions.');
+  }
+  const rounded = String.raw`function __slowLookRoundRect(e,r,t,a,s,n){var i,o,d,f;n==="cornr1"?(i=0,o=0,d=0,f=t):n==="cornr2"?(i=t,o=a,d=a,f=t):n==="cornrAll"?(i=t,o=t,d=t,f=t):n==="diag"&&(i=t,o=a,d=t,f=a);var k=Math.min(Math.max(e,0),Math.max(r,0))/2;return s==="round"?"M0,"+(r-o*k)+" Q0,"+r+" "+o*k+","+r+" L"+(e-d*k)+","+r+" Q"+e+","+r+" "+e+","+(r-d*k)+" L"+e+","+f*k+" Q"+e+",0 "+(e-f*k)+",0 L"+i*k+",0 Q0,0 0,"+i*k+" z":s==="snip"?"M0,"+i*k+" L0,"+(r-o*k)+" L"+o*k+","+r+" L"+(e-d*k)+","+r+" L"+e+","+(r-d*k)+" L"+e+","+f*k+" L"+(e-f*k)+",0 L"+i*k+",0 z":void 0}`;
+  source = rounded + '\n' + source.replace(roundedCall, 'var ze=__slowLookRoundRect(u,h,je,et,B0,D0);')
+    .replace(parallelogram, correctedParallelogram);
+}
+
+// Preserve a gradient line and its end caps on open arcs. Draw the elliptical
+// arc around the correct centre instead of rotating a circle-shaped path.
+if (!source.includes('function __slowLookArcPath(')) {
+  const line = 'var E=Si(e,r,!0,"shape",f),Be=';
+  const arc = `var ev=$g(rc,u,F,te,Bf);p+="<path   d='"+ev[0]+"' transform='"+ev[1]+"' fill='"+(oe?"url(#imgPtrn_"+b+")":fe?"url(#linGrd_"+b+")":ee)+"' stroke='"+E.color+"' stroke-width='"+E.width+"' stroke-dasharray='"+E.strokeDasharray+"' />";break;case"chord":`;
+  for (const target of [line, arc]) {
+    if (source.split(target).length !== 2) throw new Error('The Flyfish PPTX arc rendering changed; reassess line gradients and geometry.');
+  }
+  const helpers = String.raw`var __slowLookArcNextId=0;function __slowLookArcPath(w,h,start,end){var x=w/2,y=h/2,s=start*Math.PI/180,span=((end-start)%360+360)%360,full=span===0&&end!==start,point=function(a){return[x+x*Math.cos(a),y+y*Math.sin(a)]},p=point(s),q=point((start+(full?180:span))*Math.PI/180),d="M"+p[0]+","+p[1];if(full)d+=" A"+x+","+y+" 0 0,1 "+q[0]+","+q[1]+" A"+x+","+y+" 0 0,1 "+p[0]+","+p[1];else if(span)d+=" A"+x+","+y+" 0 "+(span>180?1:0)+",1 "+q[0]+","+q[1];return[d,""]}function __slowLookArcCap(e){var cap=L(e,["p:spPr","a:ln","attrs","cap"]);return cap==="rnd"?"round":cap==="sq"?"square":"butt"}function __slowLookArcGradient(e,theme,w,h,id){var fill=L(e,["p:spPr","a:ln","a:gradFill"]);if(!fill||!L(fill,["a:gsLst","a:gs"]))return;var gradient=qu(fill,theme,e);if(!gradient||!Array.isArray(gradient.color)||gradient.color.length<2)return;var stops=gradient.color.map(function(color,i){return{color:color,pos:__slowLookGradientOffset(gradient.pos,i,gradient.color.length)}});if(stops.some(function(stop){return!/^[\da-f]{6}(?:[\da-f]{2})?$/i.test(String(stop.color))}))return;stops.sort(function(a,b){return a.pos-b.pos});return Bk(w,h,90-gradient.rot,stops.map(function(stop){return stop.color}),id,stops.map(function(stop){return stop.pos}))}`;
+  const lineWithGradient = 'var E=Si(e,r,!0,"shape",f);if(y==="arc"&&E&&typeof E==="object"){var __slowLookArcId="slowlook_arc_"+(++__slowLookArcNextId),__slowLookArcDefs=__slowLookArcGradient(e,f,u,h,__slowLookArcId);if(__slowLookArcDefs){p+=__slowLookArcDefs;E.color="url(#linGrd_"+__slowLookArcId+")"}}var Be=';
+  const repairedArc = `var ev=y==="arc"?__slowLookArcPath(u,h,F,te):$g(rc,u,F,te,Bf);p+="<path   d='"+ev[0]+"' transform='"+ev[1]+"' fill='"+(oe?"url(#imgPtrn_"+b+")":fe?"url(#linGrd_"+b+")":ee)+"' stroke='"+E.color+"' stroke-width='"+E.width+"' stroke-dasharray='"+E.strokeDasharray+"' stroke-linecap='"+(y==="arc"?__slowLookArcCap(e):"butt")+"' />";break;case"chord":`;
+  source = helpers + '\n' + source.replace(line, lineWithGradient).replace(arc, repairedArc);
 }
 
 // WPS writes chart axis IDs as signed 32-bit values. Office accepts these as
