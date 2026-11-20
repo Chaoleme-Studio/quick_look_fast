@@ -57,6 +57,8 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
   let window;
   const windows = [];
   const externalLinks = [];
+  const openedPaths = [];
+  let openPathError = '';
   class BrowserWindow extends EventEmitter {
     constructor(options) {
       super();
@@ -101,7 +103,7 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     Menu: { buildFromTemplate: () => ({}) },
     nativeImage: { createFromBitmap: () => ({}), createFromPath: () => ({ isEmpty: () => false, setTemplateImage() {} }) },
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
-    shell: { openExternal: async (url) => { externalLinks.push(url); }, readShortcutLink: (filePath) => filePath === folderShortcut
+    shell: { openExternal: async (url) => { externalLinks.push(url); }, openPath: async (filePath) => { openedPaths.push(filePath); return openPathError; }, readShortcutLink: (filePath) => filePath === folderShortcut
       ? { target: shortcutFolder, description: 'folder shortcut' }
       : { target: 'C:\\Target Folder\\document.txt', description: 'shortcut description' } },
   };
@@ -160,6 +162,14 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     let preview = window.messages.filter((message) => message.channel === 'preview-file').at(-1).payload;
     assert.equal(preview.name, 'first.txt');
     assert.equal(await (await fetch(preview.url)).text(), 'first');
+    const openWithDefault = handlers.get('open-with-default');
+    assert.equal((await openWithDefault({ sender: {} })).ok, false, 'unknown windows cannot open a path');
+    assert.equal((await openWithDefault(childFrame)).ok, false, 'embedded pages cannot open a path');
+    assert.equal((await openWithDefault({ sender: window.webContents }, second)).ok, true);
+    assert.deepEqual(openedPaths, [first], 'the main process uses its current preview, never a supplied path');
+    openPathError = 'No default application';
+    assert.match((await openWithDefault({ sender: window.webContents })).message, /No default application/);
+    openPathError = '';
 
     const checkNetwork = (url) => new Promise((resolve) => networkFilter({ url }, resolve));
     assert.equal((await checkNetwork(preview.url)).cancel, false);
@@ -182,6 +192,9 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal(window.visible, false);
     assert.equal(window.messages.at(-1).channel, 'clear-preview');
     assert.equal((await fetch(preview.url)).status, 404);
+    const countAfterHide = openedPaths.length;
+    assert.equal((await openWithDefault({ sender: window.webContents })).ok, false, 'a hidden preview cannot reopen its previous file');
+    assert.equal(openedPaths.length, countAfterHide);
 
     fsPromises.stat = async (filePath, ...args) => {
       if (filePath === first) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -249,6 +262,10 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal(await (await fetch(pinnedFile.url)).text(), 'second', 'fixed preview retains its own file token');
     const currentUrl = window.messages.filter((message) => message.channel === 'preview-file').at(-1).payload.url;
     assert.equal(await (await fetch(currentUrl)).text(), 'first');
+    assert.equal((await openWithDefault({ sender: pinnedWindow.webContents })).ok, true);
+    assert.equal(openedPaths.at(-1), second, 'a pinned window opens its own file');
+    assert.equal((await openWithDefault({ sender: window.webContents })).ok, true);
+    assert.equal(openedPaths.at(-1), first, 'the active window opens its own file');
 
     // Repeated Space from the same file manager must alternate open/closed.
     for (let n = 0; n < 4; n += 1) {
@@ -326,6 +343,8 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     await assert.rejects(() => openFolderFile(null, entry.id, 'thumbnail'), /缩略图/);
     const childFile = await openFolderFile(null, entry.id, 'preview');
     assert.equal(await (await fetch(childFile.url)).text(), 'first');
+    assert.equal((await openWithDefault({ sender: window.webContents })).ok, true);
+    assert.equal(openedPaths.at(-1), directory, 'the title-bar action opens the previewed folder');
     assert.equal((await checkNetwork(childFile.url)).cancel, false);
     ipcMain.emit('release-directory-preview', { sender: window.webContents }, 'stale-folder-id');
     assert.equal((await fetch(childFile.url)).status, 200, 'a stale folder cleanup cannot revoke a newer folder preview');

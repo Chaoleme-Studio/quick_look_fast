@@ -491,6 +491,18 @@ if (!hasLock) {
       const result = await dialog.showOpenDialog(ctx.window, { properties: ['openDirectory'] });
       if (!result.canceled && result.filePaths[0]) { forgetSource(); await openFile(ctx.pinned ? ensureActive(ctx) : ctx, result.filePaths[0]); }
     });
+    ipcMain.handle('open-with-default', async (event) => {
+      const ctx = fromEvent(event);
+      // Only the main process chooses the path; each window owns its preview.
+      const filePath = ctx?.currentFile?.path || (ctx?.folderRootId ? ctx.currentPath : undefined);
+      if (!ctx || ctx.disposed || !filePath) return { ok: false, message: '没有可打开的文件或文件夹。' };
+      try {
+        const error = await shell.openPath(filePath);
+        return error ? { ok: false, message: `系统无法打开：${error}` } : { ok: true };
+      } catch {
+        return { ok: false, message: '系统无法打开，请检查文件和默认应用。' };
+      }
+    });
     ipcMain.handle('read-directory', (event, id: unknown, offset: unknown) => {
       const ctx = fromEvent(event); if (!ctx) throw new Error('预览窗口已关闭');
       return ctx.directories.read(id, offset);

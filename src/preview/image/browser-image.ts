@@ -13,6 +13,50 @@ export function mountBrowserImage(target: HTMLElement, url: string, onReady: (si
   const frame = document.createElement('div'); frame.className = 'browser-image-frame';
   const img = document.createElement('img'); img.alt = ''; img.draggable = false; frame.append(img); stage.append(frame); viewport.append(stage);
   let scale = 1, rotation = 0, fit = true, disposed = false, loaded = false;
+  let drag: { id: number; x: number; y: number; left: number; top: number; ratioX: number; ratioY: number } | undefined;
+  const view = viewport.ownerDocument.defaultView;
+  const canPan = (): boolean => loaded && (viewport.scrollWidth > viewport.clientWidth || viewport.scrollHeight > viewport.clientHeight);
+  const syncHandCursor = (): void => { viewport.classList.toggle('is-pannable', canPan()); };
+  const finishPan = (): void => {
+    const current = drag;
+    if (!current) return;
+    drag = undefined;
+    viewport.classList.remove('is-panning');
+    view?.removeEventListener('pointermove', movePan);
+    view?.removeEventListener('pointerup', endPan);
+    view?.removeEventListener('pointercancel', endPan);
+    view?.removeEventListener('blur', finishPan);
+    if (viewport.hasPointerCapture?.(current.id)) viewport.releasePointerCapture(current.id);
+    syncHandCursor();
+  };
+  const movePan = (event: PointerEvent): void => {
+    if (!drag || event.pointerId !== drag.id) return;
+    if (!(event.buttons & 1)) { finishPan(); return; }
+    viewport.scrollLeft = drag.left - (event.clientX - drag.x) / drag.ratioX;
+    viewport.scrollTop = drag.top - (event.clientY - drag.y) / drag.ratioY;
+    event.preventDefault();
+  };
+  const endPan = (event: PointerEvent): void => { if (drag?.id === event.pointerId) finishPan(); };
+  const startPan = (event: PointerEvent): void => {
+    if (!view || event.defaultPrevented || event.pointerType !== 'mouse' || event.button !== 0 || event.isPrimary === false ||
+        event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || !canPan()) return;
+    const rect = viewport.getBoundingClientRect();
+    const ratioX = viewport.offsetWidth ? rect.width / viewport.offsetWidth : 1;
+    const ratioY = viewport.offsetHeight ? rect.height / viewport.offsetHeight : 1;
+    if (![ratioX, ratioY].every(value => Number.isFinite(value) && value > 0)) return;
+    const x = (event.clientX - rect.left) / ratioX - viewport.clientLeft;
+    const y = (event.clientY - rect.top) / ratioY - viewport.clientTop;
+    if (x < 0 || y < 0 || x >= viewport.clientWidth || y >= viewport.clientHeight) return;
+    finishPan();
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, ratioX, ratioY };
+    viewport.classList.add('is-panning');
+    view.addEventListener('pointermove', movePan, { passive: false });
+    view.addEventListener('pointerup', endPan);
+    view.addEventListener('pointercancel', endPan);
+    view.addEventListener('blur', finishPan);
+    try { viewport.setPointerCapture(event.pointerId); } catch { /* Window listeners still follow the pointer. */ }
+    event.preventDefault();
+  };
   const button = (label: string, title: string, action: () => void): HTMLButtonElement => {
     const item = document.createElement('button'); item.type = 'button'; item.textContent = label; item.title = title; item.setAttribute('aria-label', title); item.addEventListener('click', action); return item;
   };
@@ -38,6 +82,7 @@ export function mountBrowserImage(target: HTMLElement, url: string, onReady: (si
     img.style.width = `${width * scale}px`; img.style.height = `${height * scale}px`;
     img.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
     percent.textContent = `${Math.round(scale * 100)}%`;
+    syncHandCursor();
   }
   function changeScale(value: number): void { if (!loaded) return; fit = false; scale = Math.min(5, Math.max(0.01, value)); layout(); }
   const wheel = (event: WheelEvent): void => {
@@ -47,7 +92,8 @@ export function mountBrowserImage(target: HTMLElement, url: string, onReady: (si
     changeScale(scale * Math.exp(-Math.max(-360, Math.min(360, event.deltaY * unit)) / 2400));
   };
   viewport.addEventListener('wheel', wheel, { passive: false });
-  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (fit) layout(); }) : undefined;
+  viewport.addEventListener('pointerdown', startPan);
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (fit) layout(); else syncHandCursor(); }) : undefined;
   observer?.observe(viewport);
   img.addEventListener('load', () => {
     if (disposed || !img.naturalWidth || !img.naturalHeight) return;
@@ -59,5 +105,5 @@ export function mountBrowserImage(target: HTMLElement, url: string, onReady: (si
   });
   img.addEventListener('error', () => { if (!disposed) onFailure(); });
   img.src = url;
-  return () => { disposed = true; observer?.disconnect(); viewport.removeEventListener('wheel', wheel); img.removeAttribute('src'); };
+  return () => { disposed = true; finishPan(); observer?.disconnect(); viewport.removeEventListener('pointerdown', startPan); viewport.removeEventListener('wheel', wheel); img.removeAttribute('src'); };
 }

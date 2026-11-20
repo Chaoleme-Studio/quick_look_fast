@@ -21,6 +21,7 @@ declare global {
       platform: string;
       selectFile(): Promise<void>;
       selectFolder(): Promise<void>;
+      openWithDefault(): Promise<{ ok: boolean; message?: string }>;
       readDirectory(id: string, offset: number): Promise<FolderPage>;
       openDirectoryFile(id: string, purpose: 'thumbnail' | 'preview'): Promise<FolderFile>;
       resolveMarkdownImage(url: string, reference: string): Promise<string | undefined>;
@@ -85,7 +86,8 @@ app.innerHTML = `
       <div class="window-actions">
         <button class="icon-action" id="file-info-open" type="button" aria-label="文件信息" title="文件信息" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v4m0-7h.01"/></svg></button>
         <button class="icon-action pin-action" id="pin-window" type="button" aria-label="固定此预览" aria-pressed="false" title="固定此预览"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3.5h6l-.6 4 2.6 2.8v1.2H5v-1.2l2.6-2.8L7 3.5Zm3 8v5"/></svg></button>
-        <button class="open-action" id="choose" type="button" title="打开文件 (Ctrl+O)">打开文件</button>
+        <button class="open-action" id="open-default" type="button" title="使用系统默认应用打开当前文件或文件夹" disabled>使用默认应用打开</button>
+        <button class="icon-action" id="choose" type="button" aria-label="选择文件预览" title="选择文件预览 (Ctrl/⌘+O)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h5l1.5 2h8.5v7.5H2.5z"/><path d="M10 9.5v4m-2-2h4"/></svg></button>
         <button class="open-action" id="settings-open" type="button" title="设置">设置</button>
         <span class="divider"></span>
         <button class="close-action" id="close" type="button" aria-label="关闭预览" title="关闭预览 (Esc)">×</button>
@@ -114,6 +116,7 @@ app.innerHTML = `
         <div id="error" class="overlay error" hidden><span class="error-icon">!</span><strong>无法预览</strong><span id="error-message"></span></div>
       </section>
       <div id="drag-overlay" class="drag-overlay" hidden><span>松开鼠标预览文件</span></div>
+      <div id="open-feedback" class="open-feedback" role="status" aria-live="polite" hidden><span id="open-feedback-message"></span><button id="open-feedback-close" type="button" aria-label="关闭提示">×</button></div>
     </main>
     <div id="settings" class="settings-backdrop" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
       <section class="settings-panel">
@@ -150,6 +153,9 @@ const settingsPanel = element('#settings');
 const infoPanel = element('#file-info');
 const infoButton = element<HTMLButtonElement>('#file-info-open');
 const infoContent = element('#file-info-content');
+const openDefaultButton = element<HTMLButtonElement>('#open-default');
+const openFeedback = element('#open-feedback');
+const openFeedbackMessage = element('#open-feedback-message');
 const toc = element('#markdown-toc');
 const tocList = element('#markdown-toc-list');
 const navigationSetting = element<HTMLInputElement>('#settings-navigation');
@@ -667,6 +673,7 @@ function onViewerState(state: ViewerState, sourceGeneration: number): void {
 function viewerOptions(renderers: ViewerOptions['renderers']): ViewerOptions {
   return {
     locale: 'zh-CN', theme: 'light', rendererMode: 'extend', renderers,
+    image: { handTool: true },
     // The library ships a dedicated ZIP/XML worker; its default is disabled
     // unless explicitly configured. Keep page DOM layout on the UI thread.
     docx: { worker: true, renderYieldEveryMs: 8 },
@@ -940,6 +947,7 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
 async function previewFile(file: PreviewFile): Promise<void> {
   const current = ++generation;
   isPreviewing = true;
+  openDefaultButton.disabled = false;
   currentPreview = file;
   infoButton.hidden = false;
   infoPanel.hidden = true;
@@ -1113,6 +1121,8 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
 function clearPreview(): void {
   generation += 1;
   isPreviewing = false;
+  openDefaultButton.disabled = true;
+  openFeedback.hidden = true;
   currentPreview = undefined;
   infoButton.hidden = true;
   infoPanel.hidden = true;
@@ -1136,6 +1146,8 @@ function clearPreview(): void {
 window.slowLook.onStart((file) => {
   generation += 1;
   isPreviewing = false;
+  openDefaultButton.disabled = true;
+  openFeedback.hidden = true;
   currentPreview = undefined;
   infoButton.hidden = true;
   infoPanel.hidden = true;
@@ -1161,6 +1173,7 @@ window.slowLook.onPreview((file) => { void previewFile(file); });
 window.slowLook.onDirectory((folder) => {
   const current = ++generation;
   isPreviewing = true;
+  openDefaultButton.disabled = false;
   currentPreview = undefined;
   nameLabel.textContent = folder.name;
   nameLabel.title = folder.path;
@@ -1200,6 +1213,8 @@ window.slowLook.onIntegrationStatus((message) => {
 window.slowLook.onError((message) => {
   generation += 1;
   isPreviewing = false;
+  openDefaultButton.disabled = true;
+  openFeedback.hidden = true;
   currentPreview = undefined;
   infoButton.hidden = true;
   infoPanel.hidden = true;
@@ -1214,6 +1229,20 @@ window.slowLook.onError((message) => {
   viewerHost.replaceChildren();
   showError(message);
 });
+openDefaultButton.addEventListener('click', () => {
+  const current = generation;
+  openFeedback.hidden = true;
+  void window.slowLook.openWithDefault().then((result) => {
+    if (current !== generation || result.ok) return;
+    openFeedbackMessage.textContent = result.message || '无法使用默认应用打开，请检查文件和默认应用。';
+    openFeedback.hidden = false;
+  }).catch(() => {
+    if (current !== generation) return;
+    openFeedbackMessage.textContent = '无法使用默认应用打开，请检查文件和默认应用。';
+    openFeedback.hidden = false;
+  });
+});
+element('#open-feedback-close').addEventListener('click', () => { openFeedback.hidden = true; });
 element('#choose').addEventListener('click', () => { void window.slowLook.selectFile(); });
 element('#choose-welcome').addEventListener('click', () => { void window.slowLook.selectFile(); });
 element('#choose-folder').addEventListener('click', () => { void window.slowLook.selectFolder(); });

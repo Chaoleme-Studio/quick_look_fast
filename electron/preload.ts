@@ -6,6 +6,7 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld('slowLook', {
   platform: process.platform,
   selectFile: () => ipcRenderer.invoke('select-file'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+  openWithDefault: () => ipcRenderer.invoke('open-with-default'),
   readDirectory: (id: string, offset: number) => ipcRenderer.invoke('read-directory', id, offset),
   openDirectoryFile: (id: string, purpose: 'thumbnail' | 'preview') => ipcRenderer.invoke('open-directory-file', id, purpose),
   resolveMarkdownImage: (url: string, reference: string) => ipcRenderer.invoke('resolve-markdown-image', url, reference),

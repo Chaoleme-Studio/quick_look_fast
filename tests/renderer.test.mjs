@@ -29,6 +29,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
   const topmost = [];
   const pins = [];
   const canvasCalls = [];
+  let selectedFiles = 0, defaultOpens = 0;
+  let defaultOpenResult = { ok: true };
 
   try {
     window.document.body.innerHTML = '<div id="app"></div>';
@@ -88,7 +90,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       getStartup: async () => ({ supported: true, enabled: false }),
       setStartup: async (enabled) => ({ supported: true, enabled }),
       setFinderShortcut: () => {},
-      selectFile: async () => {},
+      selectFile: async () => { selectedFiles++; },
+      openWithDefault: async () => { defaultOpens++; return defaultOpenResult; },
       selectFolder: async () => {},
       readDirectory: async (id, offset) => id === 'root-folder'
         ? { entries: [{ name: '资料', kind: 'directory', id: 'child-folder' }, { name: '笔记.txt', kind: 'file', id: 'folder-note' }, { name: '网页.html', kind: 'file', id: 'folder-html' },
@@ -174,10 +177,28 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     }
     const example = path.join(directory, '预览 sample.txt');
     assert.deepEqual(topmost, [], 'legacy topmost preference must not make the window permanently topmost');
+    assert.equal(window.document.querySelector('#open-default').disabled, true, 'there is no file to open on the welcome page');
+    window.document.querySelector('#choose').click();
+    assert.equal(selectedFiles, 1, 'the folder icon selects a file for preview');
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'o', ctrlKey: true, bubbles: true, cancelable: true }));
+    assert.equal(selectedFiles, 2, 'Ctrl+O continues to select a preview file');
     await writeFile(example, 'SlowLook preview regression test', 'utf8');
     activeFile = { token: 'text-token', path: example };
     callbacks.start({ name: path.basename(example) });
+    assert.equal(window.document.querySelector('#open-default').disabled, true, 'opening is disabled until the file is known');
     callbacks.preview({ url: `${origin}/preview/text-token/${encodeURIComponent(path.basename(example))}`, name: path.basename(example), size: 32 });
+    assert.equal(window.document.querySelector('#open-default').disabled, false);
+    window.document.querySelector('#open-default').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(defaultOpens, 1, 'the primary action opens the current file with its default application');
+    defaultOpenResult = { ok: false, message: '没有默认应用' };
+    window.document.querySelector('#open-default').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(window.document.querySelector('#open-feedback').hidden, false);
+    assert.match(window.document.querySelector('#open-feedback').textContent, /没有默认应用/);
+    window.document.querySelector('#open-feedback-close').click();
+    assert.equal(window.document.querySelector('#open-feedback').hidden, true, 'the error can be dismissed without closing the preview');
+    defaultOpenResult = { ok: true };
     callbacks.progress({ phase: 'reading', loaded: 50, total: 100 });
     assert.equal(window.document.querySelector('#loading-progress').value, 50);
     assert.equal(window.document.querySelector('#loading-progress').hidden, false);
@@ -538,6 +559,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     folderButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     assert.equal(navigations.length, navBeforeFolder, 'folder navigation should not alter the file manager selection');
     callbacks.clear();
+    assert.equal(window.document.querySelector('#open-default').disabled, true, 'closing a preview disables opening the previous file');
+    assert.equal(window.document.querySelector('#open-feedback').hidden, true);
 
     const latest = path.join(directory, 'latest.txt');
     await writeFile(latest, 'latest selection wins', 'utf8');

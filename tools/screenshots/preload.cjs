@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // This isolated preload supplies deterministic demo data for documentation only.
 if (process.isMainFrame) contextBridge.exposeInMainWorld('slowLook', {
   platform: process.platform,
-  selectFile: async () => {}, selectFolder: async () => {}, readDirectory: (id, offset) => ipcRenderer.invoke('capture-read-directory', id, offset), openDroppedFile: async () => {}, hide: () => {}, navigate: () => {},
+  selectFile: async () => {}, selectFolder: async () => {}, openWithDefault: async () => ({ ok: true }), readDirectory: (id, offset) => ipcRenderer.invoke('capture-read-directory', id, offset), openDroppedFile: async () => {}, hide: () => {}, navigate: () => {},
   openDirectoryFile: (id, purpose) => ipcRenderer.invoke('capture-open-directory-file', id, purpose), releaseDirectoryPreview: () => {}, openProjectLink: () => {},
   appVersion: () => ipcRenderer.invoke('capture-app-version'), openDiagnostics: async () => ({ ok: true }),
   checkForUpdates: async () => { const version = await ipcRenderer.invoke('capture-app-version'); return { state: 'up-to-date', currentVersion: version, latestVersion: version }; },
