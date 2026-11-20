@@ -26,16 +26,18 @@ ZIP 使用 zip.js 范围读取中央目录，再在 Worker 中解压选中条目
 | 内容 | 当前链路 | 自动检查 | 尚待验证 |
 | --- | --- | --- | --- |
 | DOCX | Flyfish，ZIP/XML Worker，浏览器 DOM 排版 | 公开样本、加密样本及 Worker 解析 | 复杂分页、图片、字体、页眉页脚与 Word 的视觉一致性。 |
-| XLSX | Flyfish 工作簿和 Canvas | 公开样本中的行列、文字和填充操作 | 公式、合并、条件格式、图表及 Excel 视觉一致性。 |
+| XLSX | Flyfish 工作簿和 Canvas | 公开样本、自动/固定行高和单行合并单元格测量 | 公式、跨行合并、条件格式、图表及 Excel 视觉一致性。 |
 | PPTX | Flyfish Worker、HTML/CSS/SVG、图表 | 公开样本与文字、渐变、箭头、图表标签合成回归 | 动画、字体、图表、层级及 PowerPoint 像素对照。 |
 
 用户提供的文稿只在本机只读分析，没有加入仓库；具体 PPTX 修复见 [诊断](compatibility.md)。常见密码加密的 DOCX/XLSX/PPTX 输入与输出各限 64 MiB。未加密 OOXML 超过 128 MiB 默认先显示包结构；完整解析可能整体读入内存。
 
 这些 Office/PPT 选项是代码中的默认配置，不是设置界面里的独立开关。工具栏中的“匹配”是搜索结果，不是页码。旧版 DOC/XLS/PPT 使用不同链路，不能套用 OOXML 测试结论。
 
+XLSX 行高修复针对 Flyfish 3.3.4：对于带可靠元数据且未设置 `customHeight` 的行，原高度作为基线，按内容和字体自动增高；明确设置的高度保留。横向单行合并单元格按合并后的可见列宽测量；跨行合并仍沿用原行为。用户给出的工作簿只在本机只读解析，合成测试覆盖相同行高属性；仍需在目标桌面与 Excel 视觉对照，字体替代和其他复杂样式可能产生差异。
+
 ### 技术工具
 
-- Vite 8 已用于前端构建；TypeScript 编译 Electron 主进程，npm 和 package-lock 管理依赖。
+- Vite 8 已用于前端构建；TypeScript 编译 Electron 主进程，pnpm 和 pnpm-lock.yaml 管理依赖。
 - pnpm 是可选的依赖管理方案；迁移需要同时更新锁文件、CI 和打包验证，不会直接提升用户预览速度。
 - Tailwind CSS 是可选的界面样式方案；当前使用普通 CSS，引入它不会自动提高 Office 还原度。
 - `src/main.ts` 和 `electron/main.ts` 仍偏大；继续按设置、渲染生命周期和平台适配拆分，比单纯更换工具更有价值。
@@ -53,12 +55,12 @@ ZIP 使用 zip.js 范围读取中央目录，再在 Worker 中解压选中条目
 | 宽箭头头部过大 | 默认箭头按短边计算头部，并处理单个调整值；合成样本检查左右箭头。 |
 | 53 页样本第 31 页标签拥挤 | 坐标轴字体为 10 pt；分类标签原有换行被强制单行。含显式换行的水平轴改为多行，保留显式旋转。 |
 
-实现位于 [`patch-flyfish-pptx.cjs`](../scripts/patch-flyfish-pptx.cjs) 和 [`flyfish-pptx-chart-fix.cjs`](../scripts/flyfish-pptx-chart-fix.cjs)，构建时检查上游版本和结构。异常组合缩放采用启发式阈值，其他旋转、翻转、字体、图表及复杂对象仍可能不一致；升级 Flyfish 必须重新评估。
+实现位于 [`patch-flyfish-pptx.cjs`](../patch/patch-flyfish-pptx.cjs) 和 [`flyfish-pptx-chart-fix.cjs`](../patch/flyfish-pptx-chart-fix.cjs)，构建时检查上游版本和结构。异常组合缩放采用启发式阈值，其他旋转、翻转、字体、图表及复杂对象仍可能不一致；升级 Flyfish 必须重新评估。
 
 建议在正常桌面用 PowerPoint 和 QuickLook Fast 对照用户指定的首页、目录页、总结条、箭头页和第 31 页，记录系统字体与截图；不要把结构测试当作视觉验收。
 
 ## Flyfish 上游更新
 
-QuickLook Fast 是 Flyfish 的宿主，当前 npm 和离线资源固定在 3.3.4；不需要启动另一个 Flyfish 应用。上游发布新版本不会自动改变已发布的应用。升级时应同步更新 `@file-viewer/*` 和 Vite 插件，检查 `scripts/patch-flyfish-pptx.cjs`、`scripts/patch-flyfish-docx.cjs` 的版本与匹配条件，然后重新构建资源并执行格式、Office、密码和三平台测试。不能直接覆盖已打包的单个 Worker：本地补丁与资源版本必须一致。若补丁已被上游修复，应比较并删除对应补丁，再以真实文档验证。
+QuickLook Fast 是 Flyfish 的宿主，当前依赖和离线资源固定在 3.3.4；不需要启动另一个 Flyfish 应用。上游发布新版本不会自动改变已发布的应用。升级时应同步更新 `@file-viewer/*` 和 Vite 插件，检查 `patch/patch-flyfish-pptx.cjs`、`patch/patch-flyfish-docx.cjs`、`patch/patch-flyfish-xlsx.cjs` 与 `patch/flyfish-xlsx-row-fix.cjs` 的版本与匹配条件，然后重新构建资源并执行格式、Office、密码和三平台测试。不能直接覆盖已打包的单个 Worker：本地补丁与资源版本必须一致。若补丁已被上游修复，应比较并删除对应补丁，再以真实文档验证。
 
 3.3.4 的上游完整目录有 275 个扩展名。当前 Full 基线与显式设计、二进制、签名渲染器覆盖 272 个注册扩展名；其中 `bin`、`elf`、`exe`、`dll`、`class`、`macho` 优先通过文件头检查并回退为文本或信息，因此约 266 个是内容渲染候选。`bpmn`、`dcm`、`dicom` 未加入当前渲染器组合。数字由 `tests/format-inventory.test.mjs` 检查，是路由统计而非逐格式验收结果。

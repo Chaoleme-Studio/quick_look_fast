@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { patchChartConfig } = require('../scripts/flyfish-pptx-chart-fix.cjs');
+const { patchChartConfig } = require('../patch/flyfish-pptx-chart-fix.cjs');
 
 test('PPTX chart categories preserve explicit line breaks without changing other charts', async () => {
   const source = await readFile(new URL('../node_modules/@file-viewer/pptx/dist/chart-config.js', import.meta.url), 'utf8');

@@ -26,8 +26,9 @@ test('screenshot harness prepares five named captures from public or synthetic d
   const load = (name) => {
     if (name === 'electron') return electron;
     if (name === 'node:fs') return fakeFs;
-    if (name.endsWith('dist-electron/file-server.js') || name.endsWith('dist-electron\\file-server.js')) return { startFileServer: async () => ({ server: { close() {} }, origin: 'http://127.0.0.1:12345' }) };
-    if (name.endsWith('dist-electron/protocol.js') || name.endsWith('dist-electron\\protocol.js')) return { fileResponse() {} };
+    const filename = name.replaceAll('\\', '/');
+    if (filename.endsWith('dist-electron/files/file-server.js')) return { startFileServer: async () => ({ server: { close() {} }, origin: 'http://127.0.0.1:12345' }) };
+    if (filename.endsWith('dist-electron/files/protocol.js')) return { fileResponse() {} };
     return require(name);
   };
   const source = fs.readFileSync(path.join(root, 'tools', 'screenshots', 'capture.cjs'), 'utf8');
@@ -40,6 +41,7 @@ test('screenshot harness prepares five named captures from public or synthetic d
   assert.ok(expressions.some((value) => value.includes('#file-name') && value.includes('sample.pdf')), 'capture waits for the requested document');
   assert.ok(expressions.some((value) => value.includes('.textLayer') && value.includes('QuickLook Fast')), 'PDF capture waits for rendered text');
   const sample = await handlers.get('capture-read-directory')(null, 'demo-root');
+  assert.equal(handlers.get('capture-app-version')(), require('../package.json').version);
   assert.ok(sample.entries.some((item) => item.id === 'sample-pptx'));
-  assert.equal(fs.readFileSync(path.join(root, '.npm-cache/screenshot-demo/sample.pdf')).subarray(0, 5).toString(), '%PDF-');
+  assert.equal(fs.readFileSync(path.join(root, '.local/cache/screenshot-demo/sample.pdf')).subarray(0, 5).toString(), '%PDF-');
 });

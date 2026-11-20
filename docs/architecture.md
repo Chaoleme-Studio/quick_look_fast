@@ -13,7 +13,9 @@ flowchart LR
 
 Windows 使用 C# 键盘与 Shell 桥接；macOS 使用 Finder 选区适配；GNOME 使用 D-Bus，Dolphin/Nemo 通过菜单传路径。不同桌面环境不能假定有相同的全局按键能力。
 
-`electron/main.ts` 管理单实例、窗口、令牌和 IPC；`electron/file-server.ts` 与 `protocol.ts` 用本机 HTTP 提供 GET、HEAD 和单个 Range；`directory-service.ts` 保存目录与已列出的文件 ID。`src/main.ts` 协调渲染，`folder-preview.ts`、`zip-preview.ts`、`markdown-outline.ts` 等负责各自视图。主入口仍偏大，后续可以继续拆分。
+`electron/main.ts` 管理单实例、窗口、令牌和 IPC。`electron/files/` 提供本机 HTTP 范围读取、目录会话与解析 Worker。`electron/platform/` 保存系统适配，Linux 预览服务与集成安装脚本位于同一目录。`electron/support/` 保存更新与诊断。`src/main.ts` 调度各项预览，`src/preview/` 按文件类型组织功能，`src/ui/` 保存文件信息和共享界面部件。
+
+图片尺寸来自浏览器或 Flyfish 的解码结果，PSD/PSB 使用文件头，SVG 使用明确的像素大小或矢量视框。打开文件信息才开始读取 EXIF，关闭面板或切换文件会取消请求。PNG 和 WebP 按数据块定位 EXIF，可以跳过像素数据。JPEG、TIFF 和 HEIF/AVIF 的元数据读取上限为 4 MiB。
 
 Windows 普通预览以不激活方式显示，并由桥接进程暂时提升 Z 序后恢复普通层级；文件管理器仍保留键盘焦点。图钉固定该预览并保持置顶，同时预热另一个预览窗口；各窗口共用一个主进程、桥接进程和文件服务。图钉取消后恢复普通层级。macOS/Linux 交由 Electron 和桌面窗口管理器处理，焦点和前置仍需目标桌面验证。
 
@@ -27,10 +29,27 @@ Windows 普通预览以不激活方式显示，并由桥接进程暂时提升 Z 
 
 服务端范围读取不代表每个解析器都流式：PDF 和媒体可以分段请求；常见图片使用浏览器 URL，但解码会占像素内存。ZIP 只读取目录和选中条目，条目解压在独立 Worker；RAR 使用可定位读取的 UnRAR WASM Worker。DOCX ZIP/XML 解析使用 Flyfish Worker，但页面排版仍发生在渲染进程。
 
+HTML 由沙箱 iframe 直接加载有令牌的本地文件 URL，避免先把整个文件复制为主界面的字符串；默认允许脚本，但 iframe 没有同源权限，preload 只向主框架暴露桌面 IPC。HTTP(S)/WebSocket 请求仍由应用拦截，不能将此等同于完整的进程或网络隔离；源码视图最多范围读取 1 MiB，超过 64 MiB 的文件需要用户手动启动完整预览。HTML 解析、内嵌资源和脚本本身仍会消耗浏览器进程内存，不是恒定内存方案。压缩包条目受其原有解压大小限制，先解压所选条目，再以 Blob URL 打开。
+
 Office、CAD、3D、7z/TAR 等路径可能完整读取或解压；加密 Office 需要完整解密，输入/输出各限 64 MiB。超过 128 MiB 的未加密 OOXML 默认先显示内部结构，不等于视觉首屏。固定多个窗口共用主进程和服务，但各自有渲染上下文与内存成本。
 
 音频波形组件保留浏览器媒体流；仅当音频不超过 6 MiB 且时长不超过 90 秒时读取受限数据并使用 Web Audio 解码采样。分析使用 8 kHz 输出以减小 PCM 缓冲，解码和采样仍有额外内存成本；超过阈值或解码失败时显示标注的示意波形，不影响拖动进度和播放。切换预览时取消读取并释放解码上下文。
 
 显示传输字节进度时只计算实际可获得的总量；无法计算的解析阶段显示状态。真实进程树内存、冷启动、Space 到可见窗口和首屏 P95 尚未在图形桌面测量，不能宣称达到 100 ms。
+
+Windows 资源管理器桥接管道发生写入错误时，主进程会处理错误并报告连接中断，避免未处理的管道错误导致应用弹窗。渲染进程异常退出时清理旧文件会话并尝试恢复；一分钟内连续超过三次则停止自动恢复，避免无限循环。本地受限日志记录渲染器、GPU/辅助进程及桥接的退出类别和代码，不记录预览内容；这不能替代操作系统崩溃转储，也不能凭此断定某次旧弹窗的原因。
+
+## 发行体积评估
+
+2026-11-20 在本机测量现有 Windows x64 便携目录，约 626.5 MiB（未压缩）；其中应用 `dist` 约 261.0 MiB、Electron 运行时约 356.9 MiB。`dist/file-viewer` 约 224.2 MiB：`vendor/drawio` 57.2 MiB（其中模板约 40.8 MiB）、`vendor/design` 30.8 MiB、`wasm/typst` 37.9 MiB、`wasm/cad` 29.4 MiB、`renderers` 33.3 MiB。Electron 的 `locales` 约 48.8 MiB。数据是磁盘展开大小，目录间有包含关系，不可相加。已有的 [v0.1.2 Release](https://github.com/Chaoleme-Studio/quick_look_fast/releases/tag/v0.1.2) 下载包分别约 Windows 319.3 MiB、macOS 210.9 MiB、Linux 210.2 MiB，不是本次新构建的结果。
+
+可行方向按风险从低到高排列：
+
+1. 梳理 Flyfish 的资源清单、入口和运行时网络请求，先找出可证明没有被使用的重复副本；逐格式离线回归后再排除。不能凭目录名直接删除 IIFE、Worker、WASM、字体或许可证。
+2. 调整发行归档的压缩算法和级别；只影响下载体积与打包/解压耗时，不减少运行时展开体积。应在三个平台分别实测兼容性、压缩大小和解压时间。
+3. 按需提供精简版与完整版，或将专业格式资源制作为可选组件；可以明显减少精简版的下载和磁盘占用，但会牺牲开箱即用、离线可用性及格式覆盖，且需要版本、完整性与许可管理。
+4. 若确定只保留简体中文和英文，可评估裁剪 Electron 本地化资源：本地 `zh-CN.pak` 与 `en-US.pak` 合计约 1.13 MiB，理论上未压缩目录可减少约 47.7 MiB；浏览器对话框和其他语言会受影响，压缩包实际节省尚未测量。
+
+单纯更换 npm/pnpm、拆分 Vite chunk 或把文件放入 ASAR 不会自动压缩并消除这些资源；迁移 Tauri 会影响跨平台渲染一致性和现有原生集成，需要单独原型和实测。本次未裁剪格式能力，也未生成新的发行包。
 
 [内存与兼容性](compatibility.md) · [历史需求核验](requirements-and-verification.md) · [第三方组件](../THIRD_PARTY.md)

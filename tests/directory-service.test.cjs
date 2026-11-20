@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { DirectoryService } = require('../dist-electron/directory-service.js');
+const { DirectoryService } = require('../build/dist-electron/files/directory-service.js');
 
 test('directory preview pages entries, expands folders and rejects stale or arbitrary IDs', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'slowlook-folder-'));

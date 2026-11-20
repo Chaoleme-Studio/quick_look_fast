@@ -29,9 +29,9 @@ internal static class DopusSelectionTests
         if (args.Length > 0)
         {
             string prefix = "dopus-test-" + Guid.NewGuid().ToString("N");
-            string first = Path.GetFullPath(Path.Combine(".npm-cache", prefix + "-first.txt"));
-            string next = Path.GetFullPath(Path.Combine(".npm-cache", prefix + "-next.txt"));
-            string state = Path.GetFullPath(Path.Combine(".npm-cache", prefix + "-state.txt"));
+            string first = Path.GetFullPath(Path.Combine(".local", "cache", prefix + "-first.txt"));
+            string next = Path.GetFullPath(Path.Combine(".local", "cache", prefix + "-next.txt"));
+            string state = Path.GetFullPath(Path.Combine(".local", "cache", prefix + "-state.txt"));
             try
             {
                 File.WriteAllText(first, "first");

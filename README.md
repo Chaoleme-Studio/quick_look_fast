@@ -2,103 +2,157 @@
 
 ![QuickLook Fast 图标](public/branding/app.png)
 
-**QuickLook Fast is real fast, but it's more powerful than others.**
+QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，通过文件管理器入口快速查看内容；关闭预览后程序继续驻留在系统托盘。项目原名 SlowLook，使用 Electron、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 构建。
 
-QuickLook Fast 是离线优先的桌面文件预览工具。在文件管理器中选中文件，按空格即可查看，再按空格或 Esc 收起。它以前叫 SlowLook，基于 Electron、Chromium、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 开发。感谢 Flyfish 团队和所有开源贡献者。
+当前版本为 **0.2.0**。不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
 
-项目仍处于 **0.1.2 早期版本**。不同系统的文件管理器接入方式、文件格式和还原质量有差异，详见下文。
+## 目录
 
-## 下载与启动
+- [界面截图](#界面截图)
+- [下载与运行](#下载与运行)
+- [基本操作](#基本操作)
+- [预览能力与限制](#预览能力与限制)
+- [平台与文件管理器](#平台与文件管理器)
+- [开发与构建](#开发与构建)
+- [项目目录](#项目目录)
+- [故障排查](#故障排查)
+- [文档与许可证](#文档与许可证)
 
-从 [GitHub Releases](https://github.com/Chaoleme-Studio/quick_look_fast/releases) 下载对应平台的归档，解压后运行：
+## 界面截图
 
-| 平台 | 架构及系统版本 | 启动方式 |
-| --- | --- | --- |
-| Windows | Windows 10/11，x64 | 运行 `QuickLook Fast.exe`；程序常驻系统托盘。 |
-| macOS | macOS 26 及以上，Apple Silicon / arm64 | 运行 `QuickLook Fast.app`；不提供 Intel 或旧版 macOS 构建。 |
-| Linux | x64，GNOME 或 KDE Plasma | 运行 `./quicklook-fast`；发行版需满足 Electron 运行库要求。 |
-
-这三类构建由 Release 工作流生成；系统和桌面环境的真实验证状态见[平台说明](docs/platforms.md)。macOS 目前仅使用临时签名，未做 Developer ID 签名和 Apple 公证。Linux 包是便携目录，不是 deb、rpm 或 AppImage。
-
-首次使用：
-
-1. 启动程序，在资源管理器中选中一个文件。
-2. 在已接入的入口按 **Space** 预览；再次按 Space 或按 **Esc** 关闭。
-3. 使用方向键尝试切换选中的文件；图钉可固定并置顶当前预览，再继续查看其他文件。
-4. 关闭预览窗口不会退出程序；从托盘菜单选择“退出”才会完全退出。
-
-Windows 支持 Explorer、桌面和 Directory Opus 的 Space 入口。也可拖放文件或文件夹、从窗口中选择，或通过 `"QuickLook Fast.exe" "完整路径"` 打开。其他平台的快捷键接入有所不同。
-
-## 能预览什么
-
-| 类别 | 功能和边界 |
-| --- | --- |
-| Office 与 PDF | Word、Excel、PowerPoint、PDF、OFD 等由 Flyfish 渲染；支持常见密码加密的 DOCX/XLSX/PPTX，复杂排版仍可能与原软件不同。 |
-| 图片、音频、视频 | 图片支持滚轮缩放和部分 EXIF；音视频默认播放。音频波形可拖动进度，短小音频尝试提取真实波形，大文件使用标注的示意波形。 |
-| 代码与文本 | 常见代码着色和行号，Markdown 左侧目录；大文本默认只读取片段，SRT 等可以文本方式预览。 |
-| 文件夹与压缩包 | 文件夹分页、下钻、类型图标和可见图片缩略图；ZIP/RAR 按需读取目录和选中条目，支持常见密码。文件夹总大小暂不递归统计。 |
-| 工程及其他格式 | 尝试预览 CAD、3D、设计文件、邮件、字体和结构化数据；不支持或无法解析的内容回退到文本或文件信息。 |
-
-Flyfish 3.3.4 的完整目录登记 **275 个扩展名、47 条预览链路**。本项目使用 Full 基线并显式加载设计、二进制和签名渲染器，按当前注册信息有 **272 个扩展名的候选路由**；其中 6 类二进制扩展名当前优先显示文本或文件信息，因此约 **266 个**进入内容渲染候选。DICOM 和 BPMN 未接入。这是代码注册数量，**不是逐一实测通过的格式数**，也不保证每个文件都能完整还原。[上游格式清单](https://github.com/flyfish-dev/file-viewer/wiki/Supported-Formats) · [限制和验证](docs/compatibility.md)
-
-## GNOME 与 KDE / Dolphin
-
-Linux 解压后，运行下面的命令安装用户级文件管理器集成：
-
-```sh
-./install-integration.sh          # Dolphin / Nemo 服务菜单
-./install-integration.sh --gnome  # 同时安装 GNOME Files 预览服务
-```
-
-GNOME Files 使用预览 D-Bus；KDE Dolphin 使用服务菜单，支持文件和文件夹。Dolphin **26.04 及以上**可在快捷键设置中为该菜单动作绑定 Space；更早版本可使用菜单，但不能保证同样的快捷键配置。KDE 的 Wayland 和 X11 会话均为目标环境，尚需实机验收。安装脚本不覆盖已有的同名用户级集成文件。[配置和限制](docs/platforms.md)
-
-## 与 QuickLook、旧版 SlowLook 的关系
-
-QuickLook Fast 是独立应用，**不是** QL-Win/C# QuickLook 的插件或原地升级包，不会自动导入其插件和设置。两者同时常驻可能竞争 Space 和方向键；要替换使用，请先从旧 QuickLook 的托盘菜单退出并关闭其开机启动，再启动本项目。PowerToys Peek 及 Directory Opus 自身的空格绑定也可能冲突。
-
-旧版 SlowLook 也应先退出并关闭旧开机项。改名后应用身份和系统用户数据目录可能不同，旧设置不会自动迁移；Linux 若安装过旧服务菜单，可能需要手动移除旧菜单项。不会自动删除原软件或用户文件。[完整迁移说明](docs/platforms.md)
-
-Flyfish 是本项目的上游渲染组件，不是需要同时启动的另一个预览程序。项目固定使用 3.3.4；构建时应用本地 PPTX 与 DOCX 兼容补丁。升级 Flyfish 时要同步检查 API、离线资源、补丁及回归测试，不能只替换一个文件。[上游更新与 Office 说明](docs/compatibility.md)
-
-## 截图
+以下图片使用合成文件夹、合成 PDF 与公开 PPTX 示例。来源与重建方法见[打包与维护](docs/releasing.md#重建文档截图)。
 
 <!-- screenshots:start -->
 
-| 文件夹与内容预览 | PDF 预览 |
-| --- | --- |
-| ![文件夹预览](docs/screenshots/folder.png) | ![PDF 预览](docs/screenshots/pdf.png) |
+**文件夹与内容预览**
 
-| 设置 | 欢迎页 |
-| --- | --- |
-| ![设置](docs/screenshots/settings.png) | ![欢迎页](docs/screenshots/welcome.png) |
+![文件夹预览](docs/screenshots/folder.png)
+
+**PDF 预览**
+
+![PDF 预览](docs/screenshots/pdf.png)
+
+**PPTX 预览**
 
 ![PPTX 预览](docs/screenshots/pptx.png)
 
+**设置**
+
+![设置](docs/screenshots/settings.png)
+
+**欢迎页**
+
+![欢迎页](docs/screenshots/welcome.png)
+
 <!-- screenshots:end -->
 
-截图脚本使用合成目录、合成 PDF 和公开 PPTX 样本，不读取真实工作文档。[截图说明](docs/screenshots/README.md)
+## 下载与运行
 
-## 技术路线与开发
+从 [GitHub Releases](https://github.com/Chaoleme-Studio/quick_look_fast/releases) 下载对应系统和架构的归档，**完整解压整个目录**后运行；可执行文件需要与其余程序文件保持在一起。
 
-Electron 45 + Chromium + TypeScript + Vite 8；Flyfish 3.3.4 提供主要格式渲染，ZIP/RAR、Office 解密和 EXIF 使用专用库。Node 本地文件服务支持 Range；大文本、目录和压缩包按需读取，但部分 Office、CAD 和媒体解码仍可能占用较多内存。Windows 使用 C# 桥接，macOS 使用 Finder 适配，GNOME 使用 D-Bus，Dolphin/Nemo 使用服务菜单。
+| 平台 | 目标环境 | 启动入口 | 当前限制 |
+| --- | --- | --- | --- |
+| Windows | Windows 10/11，x64 | `QuickLook Fast.exe` | Explorer、桌面和 Directory Opus 接入仍需实机验证；发布包未签名。 |
+| macOS | macOS 26 及以上，Apple Silicon / arm64 | `QuickLook Fast.app` | Finder 使用可选组合键；仅临时签名，未进行 Apple 公证。 |
+| Linux | x64，GNOME / KDE Plasma 等 | `./quicklook-fast` | 使用 GNOME 预览服务或 Dolphin/Nemo 菜单，需满足 Electron 系统依赖。 |
+
+本地开发构建位于 `build/versions/V17/` 这样逐个编号的目录中，编号是**本地构建迭代号**，与软件版本 `0.2.0` 分开。新构建不会覆盖已有编号。
+
+## 基本操作
+
+1. 启动程序；在 Windows 中，程序会在系统托盘常驻。
+2. 在已接入的文件管理器中选中文件，按 **Space** 打开预览；再按 Space 或 **Esc** 收起。
+3. 使用方向键尝试跟随文件管理器的选择；点击图钉固定当前窗口，可以继续预览其他文件。
+4. 关闭预览窗口只会隐藏窗口；从托盘菜单选择“退出”才能结束程序。
+
+也可以从窗口选择文件、拖放文件，或向程序传入完整路径。在“设置 → 关于”可手动检查 Release 更新；下载和替换需要自行完成。
+
+## 预览能力与限制
+
+| 类型 | 支持情况 | 主要边界 |
+| --- | --- | --- |
+| 文档 | PDF、DOCX、XLSX、PPTX、OFD 等使用 Flyfish；支持常见密码加密的 OOXML。 | 复杂排版可能不同于原软件；加密 Office 输入与输出各限 64 MiB。 |
+| 图片和媒体 | 图片预览显示宽高，信息按钮读取照片 EXIF。支持图片缩放、音视频播放和可拖动的音频波形。 | 尺寸取决于解码或文件头，EXIF 取决于原图是否保留拍摄参数。较长或较大的音频显示示意波形。 |
+| 代码与文本 | 代码着色、行号、Markdown 目录和文档目录内的相对图片；字幕可按文本查看。 | 超过 16 MiB 的常见文本默认只读取开头 1 MiB；本地图片限常见栅格格式、每张 12 MiB。 |
+| 文件夹和压缩包 | 文件夹分页和下钻，ZIP/RAR 按需读取目录及所选内容，支持常见密码。 | 文件夹总大小不递归统计；压缩包单条目压缩与解压后各限 64 MiB。 |
+| HTML、工程和其他格式 | 本地 HTML 可切换脚本；CAD、3D、设计、邮件及数据文件由对应渲染器尝试打开。 | HTML 脚本默认开启，可在设置中关闭；复杂格式、网络资源与受保护内容不保证完整显示。 |
+
+Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前约 266 个扩展名进入内容渲染候选。这是代码路由统计，不是逐一实测通过的数量。详细能力、大小限制和验证状态见[兼容性说明](docs/compatibility.md)及[使用指南](docs/user-guide.md)。
+
+预览默认在本机进行。HTML 使用隔离框架，HTTP(S)/WebSocket 外联受到限制；这不等于完整的安全隔离。手动检查更新时会连接 GitHub，不上传预览文件。
+
+## 平台与文件管理器
+
+- **Windows**：Explorer、桌面和 Directory Opus 支持已实现的 Space 入口。与 QuickLook、PowerToys Peek 或 DOpus 自带快捷键同时运行时可能冲突。
+- **macOS**：Finder 使用可选的 `⌘ Shift Space` 实验入口；系统原生 Space 尚未接管，可能需要自动化权限。
+- **Linux**：解压后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上可尝试为服务菜单设置 Space。
+
+切换自旧 QuickLook 或 SlowLook 时，先退出旧程序并关闭其开机启动。旧设置和插件不会自动迁移。系统权限、Wayland/X11、Finder 和 DOpus 双栏等细节见[平台说明](docs/platforms.md)。
+
+## 开发与构建
+
+需要 Node.js 24 和项目指定版本的 pnpm。Windows 构建原生桥接还需要 .NET Framework C# 编译器；安装依赖和下载 Electron 运行时需要网络。
 
 ```sh
-npm ci
-npm run electron:install  # 下载当前平台的 Electron 运行时
-npm run build
-npm test
-npm run dev
-npm run screenshots
-npm run benchmark:file
-npm run dist:win
+pnpm install --frozen-lockfile
+pnpm run electron:install
+pnpm run build
+pnpm test
+pnpm run dev
 ```
 
-构建需要 Node.js 24 和 npm；Windows 原生桥接需要 .NET Framework C# 编译器。`src/` 和 `electron/` 是应用源码，`native/` 和 `integrations/` 是平台接入，`tests/` 保存测试，`scripts/` 保存构建脚本。根目录的 `index.html` 是 Vite 的**源码入口**，构建后另生成 `dist/index.html`；它应当提交。`dist/`、`dist-electron/`、`artifacts/`、`node_modules/` 和本地 `references/` 都是生成物或本地研究材料，不提交。
+Windows 本地生成便携版：
 
-[使用指南](docs/user-guide.md) · [架构与性能](docs/architecture.md) · [兼容性与 Office](docs/compatibility.md) · [平台接入](docs/platforms.md) · [需求与验证](docs/requirements-and-verification.md) · [打包发布](docs/releasing.md)
+```sh
+pnpm run dist:win
+```
 
-## 许可与社区
+也可在构建后指定尚不存在的编号，例如 `node scripts/pack-portable.cjs V13`。不指定编号时自动选择现有最大编号的下一个；已有目录不会被覆盖。完整打包及其他平台说明见[打包发布](docs/releasing.md)。
 
-项目自有代码采用 [Apache-2.0](LICENSE)。第三方依赖按各自许可证分发，其中部分 Flyfish CAD 组件采用 AGPL-3.0-only，不能因为主项目使用 Apache-2.0 而忽略其要求。[第三方许可与素材](THIRD_PARTY.md)
+`pnpm run screenshots` 重新生成文档截图；`pnpm run benchmark:file` 运行文件服务基准。自动化测试与真实桌面交互覆盖范围不同，实际验收项目见[需求与验证](docs/requirements-and-verification.md)。
 
-组织：[www.chaoleme.cn](https://www.chaoleme.cn/) · 社区：[Linux DO](https://linux.do/)
+## 项目目录
+
+```text
+.
+├── src/                 预览界面、Vite 入口和样式
+│   ├── preview/         图片、媒体、目录、文本、网页、压缩包
+│   └── ui/              文件信息、侧栏按钮、密码输入
+├── electron/            主进程和 preload
+│   ├── files/           文件服务、目录会话和解析 Worker
+│   ├── platform/        系统接入，含 Linux 预览及安装入口
+│   └── support/         更新与诊断
+├── native/              Windows 桥接源码
+├── public/              应用图标等静态资源
+├── docs/                使用、架构、发布文档与第三方许可原文
+├── patch/               Flyfish 的 DOCX、PPTX、XLSX 补丁
+├── scripts/             原生构建、便携打包和本地文件服务基准
+├── tests/               自动化测试和公开测试样本
+├── tools/               截图和图标工具
+├── build/               本地生成物，不提交
+│   ├── dist/            前端编译结果
+│   ├── dist-electron/   主进程与 preload 编译结果
+│   ├── native/          Windows 原生编译结果
+│   └── versions/        V13、V14 等独立便携版本
+└── .local/              本地缓存、调研副本与历史构建，不打包、不提交
+```
+
+`src/index.html` 是 Vite 的源码入口。Electron 启动时使用构建生成的 `build/dist/index.html`。`node_modules/`、`build/` 和 `.local/` 只在本机使用。第三方许可原文位于 `docs/licenses/`。
+
+## 故障排查
+
+- **Space 没有反应**：确认程序在托盘运行，检查 QuickLook、Peek 或文件管理器快捷键是否冲突，并查看“设置 → 系统集成”。
+- **文档显示不完整**：先检查文件是否加密、超出大小限制，或依赖未安装字体；复杂文档可对照[兼容性说明](docs/compatibility.md)。
+- **程序异常退出**：在“设置 → 关于 → 运行诊断”打开本地状态日志。Windows 原生异常可能没有日志；需要复现时可按[诊断说明](docs/user-guide.md#本地崩溃诊断)选择启用本地崩溃转储。
+
+诊断日志只记录时间和进程状态，不上传文件内容。可选转储可能包含内存中的文件内容或路径，分享前请自行确认。
+
+## 文档与许可证
+
+- [使用指南](docs/user-guide.md) · [架构与性能](docs/architecture.md) · [兼容性](docs/compatibility.md)
+- [平台接入](docs/platforms.md) · [需求与验证](docs/requirements-and-verification.md) · [打包发布](docs/releasing.md)
+- [参考项目](docs/references.md) · [第三方组件和许可](THIRD_PARTY.md)
+
+本项目自有代码采用 [Apache-2.0](LICENSE)。第三方组件分别适用各自许可证；Flyfish 的部分 CAD 运行时包含 AGPL/GPL 组件，详情及对应源码位置见[第三方说明](THIRD_PARTY.md)。感谢 Flyfish 团队及所有开源贡献者。
+
+组织：[Chaoleme Studio](https://www.chaoleme.cn/) · 社区：[Linux DO](https://linux.do/)

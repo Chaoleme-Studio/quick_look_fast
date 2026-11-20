@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { performance } = require('node:perf_hooks');
-const { startFileServer } = require('../dist-electron/file-server.js');
+const { startFileServer } = require('../build/dist-electron/files/file-server.js');
 
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'slowlook-benchmark-'));

@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
 import { ZipWriter, Uint8ArrayWriter, Uint8ArrayReader, TextReader } from '@zip.js/zip.js';
-import { readZipDirectory, readZipEntry } from '../src/zip-directory.ts';
+import { readZipDirectory, readZipEntry } from '../src/preview/archive/zip-directory.ts';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { startFileServer } = require('../dist-electron/file-server.js');
+const { startFileServer } = require('../build/dist-electron/files/file-server.js');
 
 function patchUtf8Flags(zip) {
   const bytes = Buffer.from(zip);

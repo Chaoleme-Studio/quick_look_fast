@@ -1,0 +1,6 @@
+# The portable packager copies the resolved runtime dependency tree.
+nodeLinker: hoisted
+# Allow the macOS file watcher; omit the optional Unix socket binding.
+allowBuilds:
+  fsevents: true
+  usocket: false

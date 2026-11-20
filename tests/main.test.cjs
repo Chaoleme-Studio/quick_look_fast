@@ -16,12 +16,14 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
   const shortcut = path.join(directory, 'shortcut.lnk');
   const folderShortcut = path.join(directory, 'folder shortcut.lnk');
   const photo = path.join(directory, 'thumbnail.png');
+  const readme = path.join(directory, 'README.md');
   const shortcutFolder = path.join(directory, 'real folder');
   writeFileSync(first, 'first');
   writeFileSync(second, 'second');
   writeFileSync(shortcut, 'shortcut fixture');
   writeFileSync(folderShortcut, 'folder shortcut fixture');
   writeFileSync(photo, 'fake image bytes');
+  writeFileSync(readme, '![image](thumbnail.png)');
   mkdirSync(shortcutFolder);
   writeFileSync(path.join(shortcutFolder, 'inside.txt'), 'folder contents');
 
@@ -43,8 +45,15 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     registerSchemesAsPrivileged() {},
     handle: (scheme, handler) => routes.set(scheme, handler),
   };
-  let networkFilter;
-  const session = { defaultSession: { webRequest: { onBeforeRequest: (_filter, handler) => { networkFilter = handler; } } } };
+  let networkFilter, updateRequests = 0;
+  const session = {
+    defaultSession: { webRequest: { onBeforeRequest: (_filter, handler) => { networkFilter = handler; } } },
+    fromPartition: (name) => {
+      assert.equal(name, 'quicklook-fast-update');
+      return { fetch: async (url) => { updateRequests++; assert.match(url, /^https:\/\/api\.github\.com\//); return new Response(JSON.stringify({ tag_name: 'v0.2.0' })); } };
+    },
+  };
+  app.getVersion = () => '0.1.2';
   let window;
   const windows = [];
   const externalLinks = [];
@@ -53,6 +62,7 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
       super();
       assert.equal(options.alwaysOnTop, false, 'preview should start unpinned');
       assert.equal(options.skipTaskbar, true, 'Windows preview should not occupy the taskbar');
+      assert.equal(options.webPreferences.backgroundThrottling, true, 'hidden previews should not keep unthrottled background work');
       assert.match(options.icon, /branding[\\/]app\.png$/);
       window = this;
       windows.push(this);
@@ -111,7 +121,7 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
   };
 
   try {
-    require('../dist-electron/main.js');
+    require('../build/dist-electron/main.js');
     let preventedColdOpen = false;
     app.emit('open-file', { preventDefault: () => { preventedColdOpen = true; } }, first);
     app.emit('second-instance', {}, [process.execPath, first], directory);
@@ -126,11 +136,23 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal((await handlers.get('startup-set')(null, true)).enabled, true, 'startup settings should use the actual OS state');
     assert.equal((await handlers.get('startup-set')(null, false)).enabled, false);
     assert.equal(preventedColdOpen, true, 'early Finder events should be retained until initialization');
+    assert.equal(await handlers.get('app-version')({ sender: window.webContents }), '0.1.2');
+    assert.equal(updateRequests, 0, 'reading the version must not send a request');
+    assert.equal((await handlers.get('check-for-updates')({ sender: {} })).state, 'error');
+    assert.equal(updateRequests, 0, 'untrusted senders cannot initiate a check');
+    assert.equal((await handlers.get('check-for-updates')({ sender: window.webContents })).state, 'available');
+    assert.equal(updateRequests, 1, 'the request is made only after the explicit check');
+    window.webContents.mainFrame = {};
+    const childFrame = { sender: window.webContents, senderFrame: {} };
+    assert.equal((await handlers.get('startup-set')(childFrame, true)).enabled, false, 'an embedded page cannot change startup');
+    assert.equal((await handlers.get('check-for-updates')(childFrame)).state, 'error', 'an embedded page cannot initiate update checks');
+    assert.equal((await handlers.get('open-diagnostics')(childFrame)).ok, false, 'an embedded page cannot open local diagnostics');
     ipcMain.emit('open-project-link', { sender: window.webContents }, 'organization');
     ipcMain.emit('open-project-link', { sender: window.webContents }, 'flyfish');
+    ipcMain.emit('open-project-link', { sender: window.webContents }, 'releases');
     ipcMain.emit('open-project-link', { sender: window.webContents }, 'https://example.com/');
     ipcMain.emit('open-project-link', { sender: {} }, 'organization');
-    assert.deepEqual(externalLinks, ['https://www.chaoleme.cn/', 'https://github.com/flyfish-dev/file-viewer'], 'only known links from a preview window may open');
+    assert.deepEqual(externalLinks, ['https://www.chaoleme.cn/', 'https://github.com/flyfish-dev/file-viewer', 'https://github.com/Chaoleme-Studio/quick_look_fast/releases/latest'], 'only known links from a preview window may open');
     const commandsWithPinDisabled = bridgeCommands;
     window.emit('blur');
     assert.equal(bridgeCommands, commandsWithPinDisabled, 'an ordinary preview should not stay on top when focus changes');
@@ -143,6 +165,18 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal((await checkNetwork(preview.url)).cancel, false);
     assert.equal((await checkNetwork('https://example.com/file')).cancel, true);
     assert.equal((await routes.get('slowlook')(new Request('slowlook://app/index.html'))).status, 200);
+
+    await open(null, readme);
+    const markdown = window.messages.filter((message) => message.channel === 'preview-file').at(-1).payload;
+    const resolveImage = handlers.get('resolve-markdown-image');
+    assert.equal(await resolveImage({ sender: {} }, markdown.url, 'thumbnail.png'), undefined);
+    assert.equal(await resolveImage({ sender: window.webContents }, markdown.url, '../thumbnail.png'), undefined);
+    const markdownImage = await resolveImage({ sender: window.webContents }, markdown.url, 'thumbnail.png');
+    assert.equal(await (await fetch(markdownImage)).text(), 'fake image bytes');
+    assert.equal((await checkNetwork(markdownImage)).cancel, false);
+    await open(null, first);
+    assert.equal((await fetch(markdownImage)).status, 404, 'switching documents revokes image access');
+    preview = window.messages.filter((message) => message.channel === 'preview-file').at(-1).payload;
 
     app.emit('second-instance', {}, [process.execPath, first], directory);
     assert.equal(window.visible, false);
@@ -297,6 +331,12 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal((await fetch(childFile.url)).status, 200, 'a stale folder cleanup cannot revoke a newer folder preview');
     ipcMain.emit('release-directory-preview', { sender: window.webContents }, folder.id);
     assert.equal((await fetch(childFile.url)).status, 404, 'closing a child preview revokes its token');
+    const markdownEntry = listing.entries.find((item) => item.name === 'README.md');
+    const markdownChild = await openFolderFile(null, markdownEntry.id, 'preview');
+    const childImage = await resolveImage({ sender: window.webContents }, markdownChild.url, 'thumbnail.png');
+    assert.equal(await (await fetch(childImage)).text(), 'fake image bytes');
+    ipcMain.emit('release-directory-preview', { sender: window.webContents }, folder.id);
+    assert.equal((await fetch(childImage)).status, 404, 'closing a folder child revokes its Markdown images');
     const imageEntry = listing.entries.find((item) => item.name === 'thumbnail.png');
     const thumbnail = await openFolderFile(null, imageEntry.id, 'thumbnail');
     const imagePreview = await openFolderFile(null, imageEntry.id, 'preview');
@@ -322,6 +362,14 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal((await fetch(retainedFile.url)).status, 404, 'closing the folder revokes child access');
     assert.equal((await fetch(thumbnail.url)).status, 404, 'closing the folder revokes thumbnail access');
     await assert.rejects(() => handlers.get('read-directory')(null, folder.id, 0), /已失效/);
+    await open({ sender: folderWindow.webContents }, first);
+    folderWindow.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: -1 });
+    assert.match(folderWindow.messages.filter((message) => message.channel === 'preview-error').at(-1).payload, /已恢复/);
+    fakeBridge.stdin.emit('error', Object.assign(new Error('broken pipe'), { code: 'EPIPE' }));
+    assert.match(folderWindow.messages.filter((message) => message.channel === 'integration-status').at(-1).payload, /连接已中断/);
+    for (let i = 0; i < 3; i++) folderWindow.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: -1 });
+    assert.equal(folderWindow.destroyed, true, 'repeated renderer failures do not cause an endless restart loop');
+    fakeBridge.kill();
   } finally {
     fsPromises.stat = originalStat;
     Module._load = originalLoad;
@@ -331,6 +379,7 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     unlinkSync(shortcut);
     unlinkSync(folderShortcut);
     unlinkSync(photo);
+    unlinkSync(readme);
     unlinkSync(path.join(shortcutFolder, 'inside.txt'));
     rmdirSync(shortcutFolder);
     rmdirSync(directory);

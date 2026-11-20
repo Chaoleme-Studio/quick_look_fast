@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 test('DOCX parsing worker accepts only the bundled local JSZip and parses a document', async () => {
-  const workerPath = fileURLToPath(new URL('../dist/file-viewer/vendor/docx/docx.worker.js', import.meta.url));
+  const workerPath = fileURLToPath(new URL('../build/dist/file-viewer/vendor/docx/docx.worker.js', import.meta.url));
   const bytes = await readFile(new URL('./fixtures/office-sample.docx', import.meta.url));
   const run = (jsZipUrl) => new Promise((resolve, reject) => {
     const worker = new Worker(`
@@ -21,7 +21,7 @@ test('DOCX parsing worker accepts only the bundled local JSZip and parses a docu
       };
       require(workerData.worker);
       parentPort.on('message', data => globalThis.onmessage({ data }));
-    `, { eval: true, workerData: { worker: workerPath, zip: fileURLToPath(new URL('../dist/file-viewer/vendor/docx/jszip.min.js', import.meta.url)) } });
+    `, { eval: true, workerData: { worker: workerPath, zip: fileURLToPath(new URL('../build/dist/file-viewer/vendor/docx/jszip.min.js', import.meta.url)) } });
     const timer = setTimeout(() => { void worker.terminate(); reject(new Error('DOCX worker timed out')); }, 10000);
     worker.on('error', error => { clearTimeout(timer); void worker.terminate(); reject(error); });
     worker.on('message', message => {

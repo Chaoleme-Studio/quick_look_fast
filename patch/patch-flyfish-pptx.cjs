@@ -10,10 +10,10 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const version = require(path.join(root, 'node_modules', '@file-viewer', 'pptx', 'package.json')).version;
 if (version !== '3.3.4') throw new Error(`Reassess the PPTX inset patch for Flyfish ${version}.`);
-const worker = path.join(root, 'dist', 'file-viewer', 'vendor', 'pptx', 'pptx.worker.js');
+const worker = path.join(root, 'build', 'dist', 'file-viewer', 'vendor', 'pptx', 'pptx.worker.js');
 let source = fs.readFileSync(worker, 'utf8');
 const marker = 'function __slowLookPptxInset(';
-const notice = '/* QuickLook Fast modified this Flyfish PPTX Worker: text, progressive styles, gradient stops and arrow geometry; see THIRD_PARTY.md and scripts/patch-flyfish-pptx.cjs. */\n';
+const notice = '/* QuickLook Fast modified this Flyfish PPTX Worker: text, progressive styles, gradient stops and arrow geometry; see THIRD_PARTY.md and patch/patch-flyfish-pptx.cjs. */\n';
 const expression = /"box-sizing:border-box;padding:"\+([\w$]+)\(([\w$]+)\.top,"y",([\w$]+)\)\+"px "\+\1\(\2\.right,"x",\3\)\+"px "\+\1\(\2\.bottom,"y",\3\)\+"px "\+\1\(\2\.left,"x",\3\)\+"px;"/g;
 if (!source.includes(marker)) {
   const matches = [...source.matchAll(expression)];

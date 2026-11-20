@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isProbablyText, formatHexSample } from '../src/file-inspection.ts';
+import { isProbablyText, formatHexSample } from '../src/preview/file-inspection.ts';
 
 test('classifies text and binary from a bounded sample', () => {
   assert.equal(isProbablyText(new TextEncoder().encode('1\n00:00:01,000 --> 00:00:02,000\n你好')), true);

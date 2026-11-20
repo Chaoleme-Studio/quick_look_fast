@@ -1,9 +1,11 @@
+import { formatDimensions, type ImageDimensions } from './image-metadata.ts';
+
 /** Browser-decoded images avoid a second JavaScript Blob/base64 copy of the file. */
 export function supportsBrowserImage(name: string): boolean {
-  return /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i.test(name);
+  return /\.(?:png|apng|jpe?g|jfif|gif|webp|bmp|avif)$/i.test(name);
 }
 
-export function mountBrowserImage(target: HTMLElement, url: string, onReady: () => void, onFailure: () => void): () => void {
+export function mountBrowserImage(target: HTMLElement, url: string, onReady: (size: ImageDimensions) => void, onFailure: () => void, showSize = false): () => void {
   const root = document.createElement('div'); root.className = 'browser-image-view';
   const bar = document.createElement('div'); bar.className = 'browser-image-toolbar';
   const viewport = document.createElement('div'); viewport.className = 'browser-image-viewport';
@@ -19,6 +21,9 @@ export function mountBrowserImage(target: HTMLElement, url: string, onReady: () 
   const zoomIn = button('+', '放大', () => changeScale(scale * 1.1));
   const actual = button('1:1', '实际大小', () => changeScale(1));
   const rotate = button('↻', '顺时针旋转', () => { rotation = (rotation + 90) % 360; layout(); });
+  const sizeLabel = document.createElement('span');
+  sizeLabel.className = 'browser-image-size';
+  if (showSize) bar.append(sizeLabel);
   bar.append(zoomOut, percent, zoomIn, actual, rotate); root.append(bar, viewport); target.replaceChildren(root);
   function layout(): void {
     if (!loaded || disposed) return;
@@ -44,7 +49,14 @@ export function mountBrowserImage(target: HTMLElement, url: string, onReady: () 
   viewport.addEventListener('wheel', wheel, { passive: false });
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (fit) layout(); }) : undefined;
   observer?.observe(viewport);
-  img.addEventListener('load', () => { if (!disposed && img.naturalWidth && img.naturalHeight) { loaded = true; layout(); onReady(); } });
+  img.addEventListener('load', () => {
+    if (disposed || !img.naturalWidth || !img.naturalHeight) return;
+    loaded = true;
+    layout();
+    const size = { width: img.naturalWidth, height: img.naturalHeight };
+    if (showSize) sizeLabel.textContent = formatDimensions(size);
+    onReady(size);
+  });
   img.addEventListener('error', () => { if (!disposed) onFailure(); });
   img.src = url;
   return () => { disposed = true; observer?.disconnect(); viewport.removeEventListener('wheel', wheel); img.removeAttribute('src'); };

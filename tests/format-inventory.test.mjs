@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_RENDERER_DEFINITIONS } from '@file-viewer/core';
 import { signatureRendererDefinition } from '@file-viewer/renderer-signature';
-import { selectExtraRenderers } from '../src/extra-renderers.ts';
-import { FORCE_INSPECTION_EXTENSIONS } from '../src/file-inspection.ts';
+import { selectExtraRenderers } from '../src/preview/extra-renderers.ts';
+import { FORCE_INSPECTION_EXTENSIONS } from '../src/preview/file-inspection.ts';
 
 test('format inventory distinguishes the upstream catalog from configured renderers and metadata fallbacks', () => {
   const extras = new Set(['@file-viewer/renderer-design', '@file-viewer/renderer-binary', '@file-viewer/renderer-signature']);

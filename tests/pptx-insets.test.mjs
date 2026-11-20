@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 
 const require = createRequire(import.meta.url);
-const worker = new URL('../dist/file-viewer/vendor/pptx/pptx.worker.js', import.meta.url);
+const worker = new URL('../build/dist/file-viewer/vendor/pptx/pptx.worker.js', import.meta.url);
 const fixture = new URL('./fixtures/blank-presentation.pptx', import.meta.url);
 
 test('PPTX worker keeps text insets bounded in groups with unusual coordinate scales', { skip: !existsSync(worker) }, async () => {

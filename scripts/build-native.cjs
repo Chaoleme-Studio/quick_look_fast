@@ -13,7 +13,7 @@ if (!existsSync(compiler)) {
   console.error('未找到 .NET Framework C# 编译器。请安装 .NET Framework 4.8 开发组件。');
   process.exit(1);
 }
-const output = path.join(root, 'native', 'windows', 'bin');
+const output = path.join(root, 'build', 'native', 'windows');
 mkdirSync(output, { recursive: true });
 const result = spawnSync(compiler, [
   '/nologo',

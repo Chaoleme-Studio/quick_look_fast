@@ -12,11 +12,9 @@ import JSZip from 'jszip';
 import { Worker as NodeWorker } from 'node:worker_threads';
 
 const require = createRequire(import.meta.url);
-const { startFileServer } = require('../dist-electron/file-server.js');
+const { startFileServer } = require('../build/dist-electron/files/file-server.js');
 const officeCrypto = require('officecrypto-tool');
-const portableDist = process.env.SLOWLOOK_PORTABLE_DIST
-  ? path.resolve(process.env.SLOWLOOK_PORTABLE_DIST)
-  : fileURLToPath(new URL('../artifacts/QuickLook-Fast-win-x64/resources/app/dist/', import.meta.url));
+const portableDist = process.env.SLOWLOOK_PORTABLE_DIST ? path.resolve(process.env.SLOWLOOK_PORTABLE_DIST) : undefined;
 
 async function verifyTextPreview(useBundle, bundleDirectory) {
   const directory = await mkdtemp(path.join(tmpdir(), 'slowlook-renderer-'));
@@ -83,6 +81,9 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       setAlwaysOnTop: (enabled) => topmost.push(enabled),
       setPinned: (enabled) => { pins.push(enabled); callbacks.pinState(enabled); },
       openProjectLink: (destination) => { callbacks.openedLink = destination; },
+      appVersion: async () => '0.1.2',
+      openDiagnostics: async () => { callbacks.openedDiagnostics = true; return { ok: true }; },
+      checkForUpdates: async () => ({ state: 'available', currentVersion: '0.1.2', latestVersion: '0.2.0' }),
       onPinState: (callback) => { callbacks.pinState = callback; },
       getStartup: async () => ({ supported: true, enabled: false }),
       setStartup: async (enabled) => ({ supported: true, enabled }),
@@ -90,17 +91,19 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       selectFile: async () => {},
       selectFolder: async () => {},
       readDirectory: async (id, offset) => id === 'root-folder'
-        ? { entries: [{ name: '资料', kind: 'directory', id: 'child-folder' }, { name: '笔记.txt', kind: 'file', id: 'folder-note' },
+        ? { entries: [{ name: '资料', kind: 'directory', id: 'child-folder' }, { name: '笔记.txt', kind: 'file', id: 'folder-note' }, { name: '网页.html', kind: 'file', id: 'folder-html' },
           { name: '加密.xlsx', kind: 'file', id: 'folder-protected' }, { name: '大文件.log', kind: 'file', id: 'folder-large' },
           { name: '音乐.mp3', kind: 'file', id: 'folder-audio' }], nextOffset: null, truncated: false }
         : { entries: [{ name: 'nested.md', kind: 'file' }], nextOffset: null, truncated: false },
       openDirectoryFile: async (id) => {
         if (id === 'folder-note') { activeFile = { token: 'folder-note', path: example }; return { url: `${origin}/preview/folder-note/example.txt`, name: '笔记.txt', size: 32 }; }
+        if (id === 'folder-html') { activeFile = { token: 'folder-html', path: htmlPath }; return { url: `${origin}/preview/folder-html/demo.html`, name: '网页.html', size: 64 }; }
         if (id === 'folder-protected') { activeFile = { token: 'folder-protected', path: protectedFile }; return { url: `${origin}/preview/folder-protected/office.xlsx`, name: '加密.xlsx', size: protectedBytes.length }; }
         if (id === 'folder-large') { activeFile = { token: 'folder-large', path: large }; return { url: `${origin}/preview/folder-large/large.log`, name: '大文件.log', size: largeBytes.length }; }
         if (id === 'folder-audio') { activeFile = { token: 'folder-audio', path: example }; return { url: `${origin}/preview/folder-audio/audio.mp3`, name: '音乐.mp3', size: 32 }; }
         throw new Error('No folder file fixture');
       },
+      resolveMarkdownImage: async (_url, reference) => reference === 'thumbnail.png' ? `${origin}/preview/image/thumbnail.png` : undefined,
       releaseDirectoryPreview: () => {},
       contentTask: async () => ({ ok: false, code: 'failed', message: 'No content task fixture' }),
       cancelContent: () => {},
@@ -127,7 +130,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     class BrowserWorker {
       constructor(url) {
         if (!String(url).includes('pptx.worker.js')) throw new Error(`Unexpected test worker: ${url}`);
-        const workerPath = path.resolve(bundleDirectory || 'dist', 'file-viewer/vendor/pptx/pptx.worker.js');
+        const workerPath = path.resolve(bundleDirectory || 'build/dist', 'file-viewer/vendor/pptx/pptx.worker.js');
         this.worker = new NodeWorker(`
           const { parentPort, workerData } = require('node:worker_threads');
           globalThis.self = globalThis;
@@ -147,7 +150,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     Object.defineProperty(globalThis, 'Worker', { value: BrowserWorker, writable: true, configurable: true });
 
     if (useBundle) {
-      const dist = bundleDirectory || fileURLToPath(new URL('../dist/', import.meta.url));
+      const dist = bundleDirectory || fileURLToPath(new URL('../build/dist/', import.meta.url));
       const html = await readFile(path.join(dist, 'index.html'), 'utf8');
       const entry = html.match(/src="\.\/([^"]+\.js)"/);
       const stylesheet = html.match(/href="\.\/([^"]+\.css)"/);
@@ -161,15 +164,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     } else {
       let source = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
       source = source.replace("import './style.css';", '');
-      source = source.replace("from './extra-renderers'", `from ${JSON.stringify(new URL('../src/extra-renderers.ts', import.meta.url).href)}`);
-      source = source.replace("from './file-inspection'", `from ${JSON.stringify(new URL('../src/file-inspection.ts', import.meta.url).href)}`);
-      source = source.replace("from './markdown-outline'", `from ${JSON.stringify(new URL('../src/markdown-outline.ts', import.meta.url).href)}`);
-      source = source.replace("from './folder-preview'", `from ${JSON.stringify(new URL('../src/folder-preview.ts', import.meta.url).href)}`);
-      source = source.replace("from './image-wheel-zoom'", `from ${JSON.stringify(new URL('../src/image-wheel-zoom.ts', import.meta.url).href)}`);
-      source = source.replace("from './browser-image'", `from ${JSON.stringify(new URL('../src/browser-image.ts', import.meta.url).href)}`);
-      source = source.replace("from './zip-preview'", `from ${JSON.stringify(new URL('../src/zip-preview.ts', import.meta.url).href)}`);
-      source = source.replace("from './password-prompt'", `from ${JSON.stringify(new URL('../src/password-prompt.ts', import.meta.url).href)}`);
-      source = source.replace("from './audio-waveform'", `from ${JSON.stringify(new URL('../src/audio-waveform.ts', import.meta.url).href)}`);
+      source = source.replace(/from '\.\/([^']+)'/g, (_match, module) =>
+        'from ' + JSON.stringify(new URL('../src/' + module + '.ts', import.meta.url).href));
       for (const name of ['@file-viewer/core', '@file-viewer/web-full', '@file-viewer/renderer-binary', '@file-viewer/renderer-design', '@file-viewer/renderer-signature', 'exifr']) {
         source = source.replaceAll(`import('${name}')`, `import(${JSON.stringify(import.meta.resolve(name))})`);
       }
@@ -269,6 +265,14 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     assert.match(window.document.querySelector('#group-about').textContent, /www\.chaoleme\.cn/);
     window.document.querySelector('[data-external-link="organization"]').click();
     assert.equal(callbacks.openedLink, 'organization');
+    assert.match(window.document.querySelector('#app-version').textContent, /0\.1\.2/);
+    window.document.querySelector('#check-update').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(window.document.querySelector('#update-status').textContent, /0\.2\.0/);
+    window.document.querySelector('[data-external-link="releases"]').click();
+    assert.equal(callbacks.openedLink, 'releases');
+    window.document.querySelector('#open-diagnostics').click();
+    assert.equal(callbacks.openedDiagnostics, true);
     navigationSetting.checked = true;
     navigationSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
     window.document.querySelector('#settings-close').click();
@@ -284,10 +288,39 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     assert.equal(error.hidden, false, 'a failed load should show the error state');
     assert.equal(loading.hidden, true, 'a failed load should not leave the loading overlay visible');
 
+    const htmlPath = path.join(directory, 'demo.html');
+    await writeFile(htmlPath, '<!doctype html><p>local preview</p><script>window.demo=true</script>');
+    activeFile = { token: 'html-token', path: htmlPath };
+    callbacks.start({ name: 'demo.html' });
+    callbacks.preview({ url: `${origin}/preview/html-token/demo.html`, name: 'demo.html', size: 33 * 1024 * 1024 });
+    let htmlFrame = window.document.querySelector('.html-preview iframe');
+    assert.ok(htmlFrame, 'large HTML follows the interactive page route rather than the text fragment route');
+    assert.match(htmlFrame.getAttribute('sandbox'), /allow-scripts/);
+    assert.equal(loading.hidden, true);
+    const htmlSetting = window.document.querySelector('#settings-html-scripts');
+    assert.equal(htmlSetting.checked, true, 'HTML scripts are enabled by default');
+    htmlSetting.checked = false; htmlSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+    htmlFrame = window.document.querySelector('.html-preview iframe');
+    assert.equal(htmlFrame.getAttribute('sandbox'), '', 'the setting immediately reloads the page without scripts');
+    htmlSetting.checked = true; htmlSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.match(window.document.querySelector('.html-preview iframe').getAttribute('sandbox'), /allow-scripts/);
+
+    const htmlZipPath = path.join(directory, 'html-archive.zip');
+    const htmlZip = new JSZip(); htmlZip.file('page.html', '<p>archive page</p><script>window.demo=true</script>');
+    const htmlZipBytes = await htmlZip.generateAsync({ type: 'nodebuffer' });
+    await writeFile(htmlZipPath, htmlZipBytes);
+    activeFile = { token: 'html-zip', path: htmlZipPath };
+    callbacks.start({ name: 'html-archive.zip' });
+    callbacks.preview({ url: `${origin}/preview/html-zip/html-archive.zip`, name: 'html-archive.zip', size: htmlZipBytes.length });
+    for (let attempt = 0; attempt < 150 && !window.document.querySelector('.zip-file'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    window.document.querySelector('.zip-file').click();
+    for (let attempt = 0; attempt < 150 && !window.document.querySelector('.zip-content .html-preview iframe'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.match(window.document.querySelector('.zip-content .html-preview iframe')?.getAttribute('sandbox') || '', /allow-scripts/, 'an HTML entry in an archive uses the same isolated viewer');
+
     // After a failure, new selections must load normally rather than retain the old error.
     for (const [name, data, expected] of [
       ['next.json', '{"message":"SlowLook recovered after an error"}', /SlowLook recovered after an error/],
-      ['notes.md', '# SlowLook markdown preview', /SlowLook markdown preview/],
+      ['notes.md', '# SlowLook markdown preview\n\n![示例](thumbnail.png)', /SlowLook markdown preview/],
     ]) {
       const next = path.join(directory, name);
       await writeFile(next, data, 'utf8');
@@ -305,6 +338,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       if (name === 'notes.md') {
         // Supply deterministic geometry for the outline's scrolling behavior.
         const article = window.document.querySelector('.viewer-root').shadowRoot.querySelector('.markdown-body');
+        for (let attempt = 0; attempt < 100 && !article.querySelector('img')?.getAttribute('src'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.match(article.querySelector('img')?.getAttribute('src') || '', /\/preview\/image\/thumbnail\.png$/, 'relative Markdown images use a local capability URL');
         const scroller = window.document.querySelector('.viewer-root').shadowRoot.querySelector('.markdown-viewer');
         Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 300 });
         Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 });
@@ -459,7 +494,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     callbacks.start({ name: '示例文件夹' });
     callbacks.directory({ id: 'root-folder', name: '示例文件夹', path: 'D:\\示例文件夹', shortcutPath: 'D:\\示例.lnk' });
     for (let attempt = 0; attempt < 100 && !window.document.querySelector('.folder-expand'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.match(window.document.querySelector('.folder-summary').textContent, /1 个文件夹 · 4 个文件/);
+    assert.match(window.document.querySelector('.folder-summary').textContent, /1 个文件夹 · 5 个文件/);
     assert.match(window.document.querySelector('.folder-heading').textContent, /快捷方式 → D:/);
     const folderButton = window.document.querySelector('.folder-expand');
     folderButton.click();
@@ -469,6 +504,11 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     window.document.querySelector('[data-folder-file="folder-note"]').click();
     for (let attempt = 0; attempt < 300 && !window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.textContent.includes('SlowLook preview regression test'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.match(window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.textContent || '', /SlowLook preview regression test/, 'folder files render through the normal viewer using a scoped URL');
+    window.document.querySelector('[data-folder-file="folder-html"]').click();
+    for (let attempt = 0; attempt < 100 && !window.document.querySelector('.folder-detail .html-preview iframe'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.match(window.document.querySelector('.folder-detail .html-preview iframe')?.getAttribute('sandbox') || '', /allow-scripts/, 'folder HTML opens directly in the isolated viewer');
+    window.document.querySelector('[data-folder-file="folder-note"]').click();
+    for (let attempt = 0; attempt < 150 && !window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.textContent.includes('SlowLook preview regression test'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
     window.document.querySelector('#settings-open').click();
     lineSetting.checked = false; lineSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
     for (let attempt = 0; attempt < 150 && window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.querySelector('.code-viewer')?.dataset.lineNumbers !== 'false'; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -564,9 +604,14 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     activeFile = { token: 'photo', path: photo };
     callbacks.start({ name: 'photo.jpg' });
     callbacks.preview({ url: `${origin}/preview/photo/photo.jpg`, name: 'photo.jpg', size: jpeg.length, path: photo });
+    const photoImage = window.document.querySelector('.browser-image-view img');
+    Object.defineProperties(photoImage, { naturalWidth: { value: 1200 }, naturalHeight: { value: 800 } });
+    photoImage.dispatchEvent(new window.Event('load'));
+    assert.match(window.document.querySelector('#file-size').textContent, /1200 × 800 px/);
     window.document.querySelector('#file-info-open').click();
     for (let attempt = 0; attempt < 200 && !window.document.querySelector('#file-info-content').textContent.includes('Canon'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.match(window.document.querySelector('#file-info-content').textContent, /Canon/, 'EXIF information should be read from the bounded image header');
+    assert.match(window.document.querySelector('#file-info-content').textContent, /图像尺寸1200 × 800 px/);
     callbacks.clear();
 
     const large = path.join(directory, '大文件.log');
@@ -660,8 +705,11 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
 
 test('source renderer handles loading, errors and switching with local files', () => verifyTextPreview(false));
 test('built renderer handles loading, errors and switching with local files', {
-  skip: !existsSync(new URL('../dist/index.html', import.meta.url)),
+  skip: !existsSync(new URL('../build/dist/index.html', import.meta.url)),
 }, () => verifyTextPreview(true));
 test('portable renderer handles loading, errors and switching with local files', {
-  skip: !existsSync(path.join(portableDist, 'index.html')),
-}, () => verifyTextPreview(true, portableDist));
+  skip: !portableDist ? 'set SLOWLOOK_PORTABLE_DIST to test a portable build' : false,
+}, () => {
+  assert.ok(existsSync(path.join(portableDist, 'index.html')), 'configured portable renderer is missing');
+  return verifyTextPreview(true, portableDist);
+});

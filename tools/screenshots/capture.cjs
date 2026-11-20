@@ -1,19 +1,19 @@
 // Captures the real renderer using fixed, non-private demo data.
-// Run on a desktop that can launch Electron: npm run build && npm run screenshots.
+// Run on a desktop that can launch Electron: pnpm run build && pnpm run screenshots.
 const { app, BrowserWindow, protocol, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const root = path.resolve(__dirname, '../..');
-const renderer = path.join(root, 'dist');
+const renderer = path.join(root, 'build', 'dist');
 const output = path.join(root, 'docs', 'screenshots');
-const scratch = path.join(root, '.npm-cache', 'screenshot-demo');
+const scratch = path.join(root, '.local', 'cache', 'screenshot-demo');
 fs.mkdirSync(scratch, { recursive: true });
 const profile = path.join(scratch, 'profile');
 fs.mkdirSync(profile, { recursive: true });
 app.setPath('userData', profile);
-const { fileResponse } = require(path.join(root, 'dist-electron', 'protocol.js'));
-const { startFileServer } = require(path.join(root, 'dist-electron', 'file-server.js'));
+const { fileResponse } = require(path.join(root, 'build', 'dist-electron', 'files', 'protocol.js'));
+const { startFileServer } = require(path.join(root, 'build', 'dist-electron', 'files', 'file-server.js'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'slowlook', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
 
 // A small synthetic PDF, with no names or content taken from the user's files.
@@ -56,6 +56,7 @@ app.whenReady().then(async () => {
     const file = files.get(id); if (!file) throw new Error('Unknown demo file');
     return { name: file.name, size: fs.statSync(file.path).size, url: `${local.origin}/preview/${tokenFor(id)}/${encodeURIComponent(file.name)}` };
   };
+  ipcMain.handle('capture-app-version', () => JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version);
   ipcMain.handle('capture-read-directory', (_event, id) => ({ entries: id === 'demo-root' ? [
     { name: '文档', kind: 'directory', id: 'demo-docs' },
     { name: '使用说明.txt', kind: 'file', id: 'sample-text' },
@@ -114,7 +115,7 @@ app.whenReady().then(async () => {
   const startMarker = '<!-- screenshots:start -->', endMarker = '<!-- screenshots:end -->';
   const start = readme.indexOf(startMarker), end = readme.indexOf(endMarker, start + startMarker.length);
   if (start < 0 || end < 0 || readme.indexOf(startMarker, start + startMarker.length) >= 0 || readme.indexOf(endMarker, end + endMarker.length) >= 0) throw new Error('README screenshot markers are missing or duplicated');
-  const images = '\n\n![文件夹预览](docs/screenshots/folder.png)\n\n![PDF 预览](docs/screenshots/pdf.png)\n\n![PPTX 预览](docs/screenshots/pptx.png)\n\n![设置](docs/screenshots/settings.png)\n\n';
+  const images = '\n\n**文件夹与内容预览**\n\n![文件夹预览](docs/screenshots/folder.png)\n\n**PDF 预览**\n\n![PDF 预览](docs/screenshots/pdf.png)\n\n**PPTX 预览**\n\n![PPTX 预览](docs/screenshots/pptx.png)\n\n**设置**\n\n![设置](docs/screenshots/settings.png)\n\n**欢迎页**\n\n![欢迎页](docs/screenshots/welcome.png)\n\n';
   const temporary = path.join(root, `.README-screenshots-${randomUUID()}.tmp`);
   try {
     fs.writeFileSync(temporary, readme.slice(0, start + startMarker.length) + images + readme.slice(end), { flag: 'wx' });

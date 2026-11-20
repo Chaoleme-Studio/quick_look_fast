@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_RENDERER_DEFINITIONS } from '@file-viewer/core';
 import { signatureRendererDefinition } from '@file-viewer/renderer-signature';
-import { selectExtraRenderers } from '../src/extra-renderers.ts';
+import { selectExtraRenderers } from '../src/preview/extra-renderers.ts';
 
 test('loads specialist renderers only for their registered file types', () => {
   for (const definition of DEFAULT_RENDERER_DEFINITIONS) {

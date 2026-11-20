@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { installImageWheelZoom } from '../src/image-wheel-zoom.ts';
+import { installImageWheelZoom } from '../src/preview/image/image-wheel-zoom.ts';
 
 test('wheel zoom applies only to the image preview, including its shadow DOM', async () => {
   const window = new Window();

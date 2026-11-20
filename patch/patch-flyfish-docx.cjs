@@ -8,7 +8,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const version = require(path.join(root, 'node_modules', '@file-viewer', 'renderer-word', 'package.json')).version;
 if (version !== '3.3.4') throw new Error(`Reassess the DOCX worker patch for Flyfish ${version}.`);
-const filename = path.join(root, 'dist', 'file-viewer', 'vendor', 'docx', 'docx.worker.js');
+const filename = path.join(root, 'build', 'dist', 'file-viewer', 'vendor', 'docx', 'docx.worker.js');
 let source = fs.readFileSync(filename, 'utf8');
 const before = 'if (!["http:", "https:", "blob:"].includes(libraryUrl.protocol)\n\t        || workerLocation.origin === "null" || libraryUrl.origin !== workerLocation.origin\n\t        || libraryOriginUrl.username || libraryOriginUrl.password)';
 const after = 'if (!(workerLocation.protocol === "slowlook:" && workerLocation.host === "app" && libraryUrl.protocol === "slowlook:" && libraryUrl.host === "app" && libraryUrl.pathname === "/file-viewer/vendor/docx/jszip.min.js" && !libraryUrl.username && !libraryUrl.password) &&\n\t        (!["http:", "https:", "blob:"].includes(libraryUrl.protocol)\n\t        || workerLocation.origin === "null" || libraryUrl.origin !== workerLocation.origin\n\t        || libraryOriginUrl.username || libraryOriginUrl.password))';

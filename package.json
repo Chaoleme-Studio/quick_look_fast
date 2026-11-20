@@ -1,23 +1,24 @@
 {
   "name": "quicklook-fast",
   "productName": "QuickLook Fast",
-  "version": "0.1.2",
+  "version": "0.2.0",
+  "packageManager": "pnpm@12.16.1",
   "private": true,
   "license": "Apache-2.0",
   "author": "Chaoleme Studio",
   "description": "快速、离线的多格式文件预览",
-  "main": "dist-electron/main.js",
+  "main": "build/dist-electron/main.js",
   "scripts": {
-    "dev": "npm run build && electron .",
+    "dev": "pnpm run build && electron .",
     "start": "electron .",
-    "build": "npm run build:native && npm run typecheck && vite build && node scripts/patch-flyfish-pptx.cjs && node scripts/patch-flyfish-docx.cjs && tsc -p tsconfig.electron.json",
+    "build": "pnpm run build:native && pnpm run typecheck && vite build && node patch/patch-flyfish-pptx.cjs && node patch/patch-flyfish-docx.cjs && node patch/patch-flyfish-xlsx.cjs && tsc -p tsconfig.electron.json",
     "build:native": "node scripts/build-native.cjs",
     "electron:install": "install-electron --no",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsc -p tsconfig.electron.json && node --test tests/*.test.cjs tests/*.test.mjs && node tests/run-native.cjs",
     "screenshots": "electron tools/screenshots/capture.cjs",
-    "benchmark:file": "node tests/benchmark-file-service.cjs",
-    "dist:win": "npm run electron:install && npm run build && node scripts/pack-portable.cjs"
+    "benchmark:file": "node scripts/benchmark-file-service.cjs",
+    "dist:win": "pnpm run electron:install && pnpm run build && node scripts/pack-portable.cjs"
   },
   "dependencies": {
     "@file-viewer/core": "3.3.4",

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { mountBrowserImage, supportsBrowserImage } from '../src/browser-image.ts';
+import { mountBrowserImage, supportsBrowserImage } from '../src/preview/image/browser-image.ts';
 
 test('common images use a browser URL with fit, gentle wheel zoom and rotation', async () => {
   const window = new Window();

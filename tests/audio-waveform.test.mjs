@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { mountAudioWaveform } from '../src/audio-waveform.ts';
+import { mountAudioWaveform } from '../src/preview/media/audio-waveform.ts';
 
 test('waveform seeks, uses bounded decoded peaks, and skips large audio', async () => {
   const window = new Window();

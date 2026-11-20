@@ -1,3 +1,5 @@
+import { createSidebarToggle } from '../../ui/sidebar-toggle.ts';
+
 export interface FolderEntry {
   name: string;
   kind: 'directory' | 'file' | 'link' | 'other';
@@ -60,7 +62,9 @@ export function mountFolderPreview(
   const footer = document.createElement('div'); footer.className = 'folder-footer';
   tree.append(header, summary, list, footer);
   const detail = document.createElement('section'); detail.className = 'folder-detail'; detail.setAttribute('aria-label', '文件预览');
-  const detailHeader = document.createElement('div'); detailHeader.className = 'folder-detail-heading'; detailHeader.textContent = '文件预览';
+  const detailHeader = document.createElement('div'); detailHeader.className = 'folder-detail-heading';
+  const detailTitle = document.createElement('span'); detailTitle.className = 'preview-detail-title'; detailTitle.textContent = '文件预览';
+  const sidebarToggle = createSidebarToggle(root, tree); detailHeader.append(sidebarToggle.button, detailTitle);
   const body = document.createElement('div'); body.className = 'folder-detail-body';
   const placeholder = document.createElement('p'); placeholder.className = 'folder-detail-empty'; placeholder.textContent = '选择左侧文件，在这里预览';
   body.append(placeholder); detail.append(detailHeader, body); root.append(tree, detail); target.replaceChildren(root);
@@ -148,7 +152,7 @@ export function mountFolderPreview(
     tree.querySelector('[aria-current="true"]')?.removeAttribute('aria-current');
     [...tree.querySelectorAll<HTMLElement>('[data-folder-file]')].find((el) => el.dataset.folderFile === entry.id)?.setAttribute('aria-current', 'true');
     const current = new AbortController(); operation = current;
-    detailHeader.textContent = entry.name;
+    detailTitle.textContent = entry.name;
     const status = document.createElement('p'); status.className = 'folder-detail-empty'; status.textContent = '正在准备预览…'; body.replaceChildren(status);
     try {
       const file = await callbacks.open(entry.id, 'preview');
@@ -227,7 +231,7 @@ export function mountFolderPreview(
     root.classList.toggle('has-file-preview', options.inlinePreview);
     detail.hidden = !options.inlinePreview;
     tree.querySelectorAll<HTMLButtonElement>('button[data-folder-file]').forEach((button) => { button.disabled = !options.inlinePreview; });
-    if (wasInline && !options.inlinePreview) { clearSelection(); detailHeader.textContent = '文件预览'; body.replaceChildren(placeholder); }
+    if (wasInline && !options.inlinePreview) { sidebarToggle.setExpanded(true); clearSelection(); detailTitle.textContent = '文件预览'; body.replaceChildren(placeholder); }
     else if (!wasInline && options.inlinePreview && selected) void choose(selected);
     if (hadThumbnails && !options.thumbnails) {
       observer?.disconnect(); queue.length = 0; queued.clear(); visible.clear(); loaded.clear(); for (const cancel of [...active.values()]) cancel();

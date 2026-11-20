@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { mountFolderPreview } from '../src/folder-preview.ts';
+import { mountFolderPreview } from '../src/preview/folder/folder-preview.ts';
 
 test('folder preview distinguishes formats, switches files and respects settings', async () => {
   const window = new Window();
@@ -32,8 +32,19 @@ test('folder preview distinguishes formats, switches files and respects settings
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(rendered, ['new.txt'], 'an older asynchronous selection cannot replace the latest one');
     assert.equal(target.querySelector('[aria-current="true"]').dataset.folderFile, 'new');
+    const toggle = target.querySelector('.preview-sidebar-toggle');
+    const preview = target.querySelector('.folder-child-viewer');
+    toggle.click();
+    assert.equal(target.querySelector('.folder-view').hidden, true);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(target.querySelector('.folder-child-viewer'), preview, 'collapsing the tree preserves the selected preview');
+    toggle.click();
+    assert.equal(target.querySelector('.folder-view').hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    toggle.click();
     dispose.setOptions({ inlinePreview: false, thumbnails: false });
     assert.equal(target.querySelector('.folder-detail').hidden, true);
+    assert.equal(target.querySelector('.folder-view').hidden, false, 'turning off inline preview makes the folder tree accessible');
     assert.equal(target.querySelector('[data-folder-file="new"]').disabled, true);
     assert.ok(released >= 2);
     assert.equal(opens.filter((value) => value.purpose === 'preview').length, 2);

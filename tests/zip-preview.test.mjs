@@ -7,9 +7,9 @@ import { createRequire } from 'node:module';
 import JSZip from 'jszip';
 import { ZipWriter, Uint8ArrayWriter, TextReader } from '@zip.js/zip.js';
 import { Window } from 'happy-dom';
-import { mountZipPreview, mountRarPreview } from '../src/zip-preview.ts';
+import { mountZipPreview, mountRarPreview } from '../src/preview/archive/zip-preview.ts';
 const require = createRequire(import.meta.url);
-const { startFileServer } = require('../dist-electron/file-server.js');
+const { startFileServer } = require('../build/dist-electron/files/file-server.js');
 
 test('ZIP preview expands folders, filters names and opens selected contents', async () => {
   const tmp = await mkdtemp(path.join(tmpdir(), 'slowlook-zip-ui-'));
@@ -41,6 +41,15 @@ test('ZIP preview expands folders, filters names and opens selected contents', a
     assert.ok(file); file.click();
     for (let n = 0; n < 100 && rendered !== 'readable content'; n += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(rendered, 'readable content');
+    const toggle = target.querySelector('.preview-sidebar-toggle');
+    const preview = target.querySelector('.zip-child-viewer');
+    toggle.click();
+    assert.equal(target.querySelector('.zip-sidebar').hidden, true);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(target.querySelector('.zip-child-viewer'), preview, 'collapsing the tree keeps the selected file mounted');
+    toggle.click();
+    assert.equal(target.querySelector('.zip-sidebar').hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
     const search = target.querySelector('input[type="search"]');
     search.value = '计划'; search.dispatchEvent(new window.Event('input', { bubbles: true }));
     assert.equal(target.querySelectorAll('.zip-file').length, 1);

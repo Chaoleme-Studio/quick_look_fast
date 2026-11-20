@@ -8,9 +8,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const dbus = require('dbus-next');
-const { createNautilusHandler, startLinuxPreviewer } = require('../dist-electron/linux-previewer.js');
-const { parseFinderSelection, FINDER_SELECTION_SCRIPT } = require('../dist-electron/macos-finder.js');
-const installer = require('../integrations/linux/install.cjs');
+const { createNautilusHandler, startLinuxPreviewer } = require('../build/dist-electron/platform/linux/previewer.js');
+const { parseFinderSelection, FINDER_SELECTION_SCRIPT } = require('../build/dist-electron/platform/macos-finder.js');
+const installer = require('../electron/platform/linux/install.cjs');
 
 const objectPath = '/org/gnome/NautilusPreviewer';
 const iface = 'org.gnome.NautilusPreviewer2';

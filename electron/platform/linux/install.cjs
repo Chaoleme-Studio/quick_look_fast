@@ -50,7 +50,7 @@ if (require.main === module) {
     if (process.platform !== 'linux') throw new Error('Run this installer on Linux.');
     const args = process.argv.slice(2);
     const launcherIndex = args.indexOf('--launcher');
-    if (launcherIndex < 0 || !args[launcherIndex + 1]) throw new Error('Usage: node integrations/linux/install.cjs --launcher /absolute/path/to/quicklook-fast [--gnome]');
+    if (launcherIndex < 0 || !args[launcherIndex + 1]) throw new Error('Usage: node electron/platform/linux/install.cjs --launcher /absolute/path/to/quicklook-fast [--gnome]');
     const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
     const result = install({ launcher: args[launcherIndex + 1], dataHome, includeGnome: args.includes('--gnome') });
     for (const target of result.installed) console.log(`Installed: ${target}`);

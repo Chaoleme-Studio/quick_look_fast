@@ -7,11 +7,11 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { ZipWriter, Uint8ArrayWriter, TextReader } from '@zip.js/zip.js';
-import { readZipDirectory } from '../src/zip-directory.ts';
-import { extractZipEntry } from '../src/zip-extraction.ts';
+import { readZipDirectory } from '../src/preview/archive/zip-directory.ts';
+import { extractZipEntry } from '../src/preview/archive/zip-extraction.ts';
 
 const require = createRequire(import.meta.url);
-const { startFileServer } = require('../dist-electron/file-server.js');
+const { startFileServer } = require('../build/dist-electron/files/file-server.js');
 
 test('built ZIP worker decrypts one range-backed entry and is cancellable', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'slowlook-zip-worker-'));
@@ -23,9 +23,9 @@ test('built ZIP worker decrypts one range-backed entry and is cancellable', asyn
   const oldWorker = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
   let parsed;
   try {
-    const output = (await readdir(new URL('../dist/assets/', import.meta.url))).find((name) => /^zip-extract\.worker-.+\.js$/.test(name));
+    const output = (await readdir(new URL('../build/dist/assets/', import.meta.url))).find((name) => /^zip-extract\.worker-.+\.js$/.test(name));
     assert.ok(output, 'Vite must include the ZIP worker in the distribution');
-    const workerUrl = pathToFileURL(path.resolve('dist/assets', output)).href;
+    const workerUrl = pathToFileURL(path.resolve('build/dist/assets', output)).href;
     let terminated = 0;
     class BrowserWorker {
       constructor() {

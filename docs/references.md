@@ -32,4 +32,6 @@ Flyfish 官方的 [QuickLook](https://github.com/flyfish-dev/quicklook) 已将 W
 
 借鉴指设计、公开协议和测试思路，不表示复制受 GPL/AGPL 约束的代码。[第三方许可](../THIRD_PARTY.md)。
 
+[Octopus](https://github.com/AIDotNet/Octopus) 的更新模块提供检查中、已是最新、发现新版本和失败等状态，也针对便携版保留下载入口。本项目借鉴这些交互状态，使用 GitHub Releases 的正式版本信息并由用户手动下载；没有复制它的自动安装或签名清单逻辑。
+
 本地文件服务支持 Range 与取消，ZIP/RAR 使用按需路径，大文本使用片段，但其他格式仍可能整体读取。以往 Node 合成文件与单次真实 ZIP Worker 测量只说明对应读取链路，不能推算 Electron 窗口响应、滚动 FPS 或完整进程树内存；后续应在三平台记录冷启动、P50/P95、有效内容首帧及峰值。

@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 if (process.platform !== 'win32') process.exit(0);
 const root = path.resolve(__dirname, '..');
 const compiler = path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
-const cache = path.join(root, '.npm-cache');
+const cache = path.join(root, '.local', 'cache');
 fs.mkdirSync(cache, { recursive: true });
 const id = randomUUID();
 const fake = path.join(cache, `dopus-fake-${id}.exe`);

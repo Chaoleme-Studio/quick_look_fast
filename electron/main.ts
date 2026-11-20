@@ -1,17 +1,21 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, crashReporter, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import { fileResponse } from './protocol';
-import { startFileServer, type ActiveFile } from './file-server';
-import { DirectoryService } from './directory-service';
-import { readStartup, writeStartup } from './login-startup';
+import { fileResponse } from './files/protocol';
+import { startFileServer, type ActiveFile } from './files/file-server';
+import { DirectoryService } from './files/directory-service';
+import { readStartup, writeStartup } from './platform/login-startup';
+import { checkForUpdates } from './support/update-checker';
+import { recordDiagnostic } from './support/diagnostics';
+import { enableLocalCrashReports } from './support/crash-reporting';
+import { resolveMarkdownImage } from './files/markdown-images';
 import type { Server } from 'node:http';
-import type { LinuxPreviewer } from './linux-previewer';
+import type { LinuxPreviewer } from './platform/linux/previewer';
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'slowlook',
@@ -19,13 +23,14 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-const appRoot = path.resolve(__dirname, '..');
-const rendererRoot = path.join(appRoot, 'dist');
+const appRoot = path.resolve(__dirname, '..', '..');
+const rendererRoot = path.join(appRoot, 'build', 'dist');
 interface PreviewContext {
   window: BrowserWindow;
   directories: DirectoryService;
   currentFile?: ActiveFile;
   folderFiles: Map<string, ActiveFile>;
+  markdownImages: Map<string, ActiveFile>;
   folderPreview?: ActiveFile;
   folderSelection: number;
   folderRootId?: string;
@@ -37,6 +42,7 @@ interface PreviewContext {
   pinned: boolean;
   disposed: boolean;
   contentWorker?: Worker;
+  rendererFailures: number[];
   loaded: Promise<void>;
 }
 
@@ -54,6 +60,27 @@ let queuedSecondInstance: { args: string[]; workingDirectory: string } | undefin
 let queuedOpenFile: string | undefined;
 let linuxPreviewer: LinuxPreviewer | undefined;
 const finderShortcut = 'Command+Shift+Space';
+
+function diagnostic(event: string, details: { reason?: string; exitCode?: number; processType?: string } = {}): void {
+  try { recordDiagnostic(app.getPath('userData'), event, details); } catch { /* Logging is optional. */ }
+}
+
+function bridgeFailed(child: ChildProcessWithoutNullStreams, reason: string): void {
+  if (bridge !== child) return;
+  bridge = undefined;
+  diagnostic('bridge-failed', { reason });
+  if (!isQuitting) sendStatus('资源管理器连接已中断，请重启 QuickLook Fast。');
+}
+
+function writeBridge(message: Record<string, unknown>): void {
+  const child = bridge;
+  if (!child || child.stdin.destroyed || !child.stdin.writable) return;
+  try {
+    child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+      if (error) bridgeFailed(child, (error as NodeJS.ErrnoException).code || 'write-failed');
+    });
+  } catch (error) { bridgeFailed(child, (error as NodeJS.ErrnoException).code || 'write-failed'); }
+}
 
 function trace(ctx: PreviewContext, event: string, extra: Record<string, unknown> = {}): void {
   if (process.env.SLOWLOOK_BENCHMARK === '1') {
@@ -76,14 +103,14 @@ function syncNativeTopmost(ctx: PreviewContext): void {
   if (process.platform !== 'win32' || !bridge?.stdin.writable || ctx.disposed || ctx.window.isDestroyed()) return;
   const handle = ctx.window.getNativeWindowHandle();
   const value = handle.length >= 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE());
-  bridge.stdin.write(`${JSON.stringify({ type: 'pin', handle: value, enabled: ctx.pinned })}\n`);
+  writeBridge({ type: 'pin', handle: value, enabled: ctx.pinned });
 }
 
 function raiseWithoutActivation(ctx: PreviewContext): void {
   if (process.platform !== 'win32' || !bridge?.stdin.writable || ctx.disposed || ctx.window.isDestroyed()) return;
   const handle = ctx.window.getNativeWindowHandle();
   const value = handle.length >= 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE());
-  bridge.stdin.write(`${JSON.stringify({ type: 'raise', handle: value, enabled: ctx.pinned })}\n`);
+  writeBridge({ type: 'raise', handle: value, enabled: ctx.pinned });
 }
 
 function showWindow(ctx: PreviewContext, focus = true): void {
@@ -104,7 +131,7 @@ function showWindow(ctx: PreviewContext, focus = true): void {
 function forgetSource(restoreFocus = false): void {
   const sourceId = activeSourceId;
   activeSourceId = undefined;
-  if (bridge?.stdin.writable) bridge.stdin.write(`${JSON.stringify({ type: 'forget', sourceId, restoreFocus })}\n`);
+  writeBridge({ type: 'forget', sourceId, restoreFocus });
 }
 
 function invalidate(ctx: PreviewContext): void {
@@ -116,6 +143,7 @@ function invalidate(ctx: PreviewContext): void {
   ctx.folderPreview = undefined;
   ctx.folderRootId = undefined;
   ctx.folderFiles.clear();
+  ctx.markdownImages.clear();
   ctx.currentPath = undefined;
   ctx.directories.clear();
 }
@@ -148,12 +176,12 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
     icon: path.join(rendererRoot, 'branding', 'app.png'), frame: false, backgroundColor: '#11141b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'), contextIsolation: true,
-      nodeIntegration: false, sandbox: true, backgroundThrottling: false,
+      nodeIntegration: false, sandbox: true, backgroundThrottling: true,
     },
   });
   const ctx: PreviewContext = {
-    window: win, directories: new DirectoryService(), folderFiles: new Map(), folderSelection: 0, version: 0, started: 0,
-    ready: false, pending: [], pinned: false, disposed: false,
+    window: win, directories: new DirectoryService(), folderFiles: new Map(), markdownImages: new Map(), folderSelection: 0, version: 0, started: 0,
+    ready: false, pending: [], pinned: false, disposed: false, rendererFailures: [],
     loaded: Promise.resolve(),
   };
   const contents = win.webContents;
@@ -174,6 +202,8 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
   win.on('blur', () => {
     if (ctx.pinned && win.isVisible()) { win.setAlwaysOnTop(true, 'floating'); syncNativeTopmost(ctx); }
   });
+  win.on('unresponsive', () => diagnostic('window-unresponsive'));
+  win.on('responsive', () => diagnostic('window-responsive'));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event, url) => { if (!url.startsWith('slowlook://app/')) event.preventDefault(); });
   win.webContents.on('did-finish-load', () => {
@@ -182,9 +212,22 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
     if (integrationStatus) win.webContents.send('integration-status', integrationStatus);
     win.webContents.send('pin-state', ctx.pinned);
   });
-  win.webContents.on('render-process-gone', () => {
+  win.webContents.on('render-process-gone', (_event, details) => {
+    if (ctx.disposed || isQuitting) return;
+    diagnostic('renderer-gone', { reason: details.reason, exitCode: details.exitCode });
     ctx.ready = false;
-    if (!ctx.disposed) void win.loadURL('slowlook://app/index.html').catch((error) => console.error('预览窗口恢复失败', error));
+    const now = Date.now();
+    ctx.rendererFailures = ctx.rendererFailures.filter((time) => now - time < 60_000);
+    ctx.rendererFailures.push(now);
+    if (ctx.rendererFailures.length > 3) {
+      diagnostic('renderer-recovery-stopped');
+      destroyWindow(ctx);
+      sendStatus('预览窗口多次崩溃，已停止自动恢复；可重新打开应用或查看运行日志。');
+      return;
+    }
+    invalidate(ctx);
+    ctx.pending = [{ channel: 'preview-error', payload: '预览进程已退出，窗口已恢复；请尝试重新打开文件。' }];
+    void win.loadURL('slowlook://app/index.html').catch((error) => console.error('预览窗口恢复失败', error));
   });
   ctx.loaded = win.loadURL('slowlook://app/index.html').catch((error) => {
     if (!ctx.disposed) console.error('预览窗口加载失败', error);
@@ -229,12 +272,14 @@ function setPinned(ctx: PreviewContext, value: boolean): void {
   send(ctx, 'pin-state', false);
 }
 
-function fromEvent(event: { sender?: Electron.WebContents } | undefined): PreviewContext | undefined {
+function fromEvent(event: { sender?: Electron.WebContents; senderFrame?: Electron.WebFrameMain | null } | undefined): PreviewContext | undefined {
+  if (event?.sender && 'senderFrame' in event && event.senderFrame !== event.sender.mainFrame) return undefined;
   return event?.sender ? contexts.get(event.sender) : active;
 }
 
 function releaseFolderSelection(ctx: PreviewContext): void {
   ctx.folderSelection += 1;
+  ctx.markdownImages.clear();
   const selected = ctx.folderPreview;
   ctx.folderPreview = undefined;
   if (selected) {
@@ -256,6 +301,7 @@ async function openFile(ctx: PreviewContext, filePath: string, triggeredAt = Dat
   ctx.folderPreview = undefined;
   ctx.folderRootId = undefined;
   ctx.folderFiles.clear();
+  ctx.markdownImages.clear();
   ctx.directories.clear();
   ctx.started = triggeredAt;
   showWindow(ctx, focus);
@@ -355,15 +401,18 @@ function trayIcon(): Electron.NativeImage {
 function startWindowsBridge(): void {
   if (process.platform !== 'win32') return;
   const binary = app.isPackaged ? path.join(process.resourcesPath, 'native', 'QuickLookFast.Bridge.exe')
-    : path.join(appRoot, 'native', 'windows', 'bin', 'QuickLookFast.Bridge.exe');
+    : path.join(appRoot, 'build', 'native', 'windows', 'QuickLookFast.Bridge.exe');
   try {
-    bridge = spawn(binary, [String(process.pid)], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    bridge.on('error', (error) => { console.error(`Explorer 集成启动失败: ${error.message}`); sendStatus('资源管理器空格预览不可用，可以使用拖放或打开文件。'); });
-    bridge.on('exit', (code) => {
-      if (!isQuitting) { console.error(`Explorer 集成已退出，代码 ${code}`); sendStatus('资源管理器空格预览不可用，可以使用拖放或打开文件。'); }
+    const child = spawn(binary, [String(process.pid)], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    bridge = child;
+    child.stdin.on('error', (error: NodeJS.ErrnoException) => bridgeFailed(child, error.code || 'pipe-error'));
+    child.on('error', (error: NodeJS.ErrnoException) => { console.error(`Explorer 集成启动失败: ${error.message}`); bridgeFailed(child, error.code || 'start-failed'); });
+    child.on('exit', (code) => {
+      if (bridge === child) bridge = undefined;
+      if (!isQuitting) { diagnostic('bridge-exit', { exitCode: code ?? undefined }); console.error(`Explorer 集成已退出，代码 ${code}`); sendStatus('资源管理器空格预览不可用，可以使用拖放或打开文件。'); }
     });
-    bridge.stderr.on('data', (chunk: Buffer) => console.error(`Explorer 集成: ${chunk.toString('utf8').trim()}`));
-    readline.createInterface({ input: bridge.stdout }).on('line', (line) => {
+    child.stderr.on('data', (chunk: Buffer) => console.error(`Explorer 集成: ${chunk.toString('utf8').trim()}`));
+    readline.createInterface({ input: child.stdout }).on('line', (line) => {
       try {
         const message = JSON.parse(line) as { type: string; path?: string; timestamp?: number; sourceId?: string; message?: string; recovery?: boolean };
         if (message.type === 'ready') { sendStatus(message.recovery === false ? '键盘监听已启动，自动恢复不可用' : ''); for (const ctx of contexts.values()) syncNativeTopmost(ctx); }
@@ -383,6 +432,10 @@ const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
   app.quit();
 } else {
+  try {
+    if (enableLocalCrashReports(app, crashReporter, process.argv)) diagnostic('crash-reports-enabled');
+  } catch { diagnostic('crash-reports-unavailable'); }
+  diagnostic('app-start');
   app.on('open-file', (event, filePath) => {
     event.preventDefault();
     if (!initialized) queuedOpenFile = filePath;
@@ -394,6 +447,9 @@ if (!hasLock) {
     if (selected) { forgetSource(); openExternalFile(selected); }
     else if (!commandLine.includes('--service')) showWindow(ensureActive());
   });
+  app.on('child-process-gone', (_event, details) => diagnostic('child-process-gone', {
+    reason: details.reason, exitCode: details.exitCode, processType: details.type,
+  }));
 
   app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock?.hide();
@@ -401,6 +457,7 @@ if (!hasLock) {
       for (const ctx of contexts.values()) {
         if (ctx.currentFile?.token === token) return ctx.currentFile;
         for (const file of ctx.folderFiles.values()) if (file.token === token) return file;
+        for (const file of ctx.markdownImages.values()) if (file.token === token) return file;
       }
       return undefined;
     }, (progress) => {
@@ -420,7 +477,7 @@ if (!hasLock) {
     });
     session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (details, callback) => {
       const allowed = Array.from(contexts.values()).some((ctx) =>
-        [ctx.currentFile, ...ctx.folderFiles.values()].some((file) => file && details.url.startsWith(`${fileServerOrigin}/preview/${file.token}/`)));
+        [ctx.currentFile, ...ctx.folderFiles.values(), ...ctx.markdownImages.values()].some((file) => file && details.url.startsWith(`${fileServerOrigin}/preview/${file.token}/`)));
       callback({ cancel: !allowed });
     });
 
@@ -470,6 +527,24 @@ if (!hasLock) {
       const ctx = fromEvent(event); if (!ctx || ctx.currentFile || typeof folderId !== 'string' || ctx.folderRootId !== folderId) return;
       releaseFolderSelection(ctx);
     });
+    ipcMain.handle('resolve-markdown-image', async (event, url: unknown, reference: unknown) => {
+      const ctx = fromEvent(event);
+      const source = ctx?.currentFile || ctx?.folderPreview;
+      if (!ctx || !source || typeof url !== 'string' || typeof reference !== 'string' ||
+          !/\.(?:md|markdown)$/i.test(source.path) || !url.startsWith(`${fileServerOrigin}/preview/${source.token}/`)) return undefined;
+      try { await source.validate?.(); } catch { return undefined; }
+      const imagePath = await resolveMarkdownImage(source.path, reference);
+      if (!imagePath || (ctx.currentFile || ctx.folderPreview)?.token !== source.token || ctx.disposed) return undefined;
+      if (ctx.markdownImages.size >= 128) return undefined;
+      const token = randomBytes(18).toString('hex');
+      const image: ActiveFile = { token, path: imagePath, validate: async () => {
+        await source.validate?.();
+        if ((ctx.currentFile || ctx.folderPreview)?.token !== source.token || ctx.markdownImages.get(token) !== image ||
+            await resolveMarkdownImage(source.path, reference) !== imagePath) throw new Error('Markdown 图片已失效');
+      } };
+      ctx.markdownImages.set(token, image);
+      return `${fileServerOrigin}/preview/${token}/${encodeURIComponent(path.basename(imagePath))}`;
+    });
     ipcMain.handle('content-task', async (event, request: unknown) => {
       const ctx = fromEvent(event);
       if (!ctx || !(ctx.currentFile || ctx.folderPreview) || !request || typeof request !== 'object') return { ok: false, code: 'failed', message: '预览已关闭。' };
@@ -492,7 +567,7 @@ if (!hasLock) {
       try { await activeFile.validate?.(); } catch { return { ok: false, code: 'failed', message: '文件夹预览已失效。' }; }
       if ((ctx.currentFile || ctx.folderPreview)?.token !== activeFile.token) return { ok: false, code: 'cancelled', message: '预览已切换。' };
       void ctx.contentWorker?.terminate();
-      const worker = new Worker(path.join(__dirname, 'content-worker.js'), { workerData: {
+      const worker = new Worker(path.join(__dirname, 'files', 'content-worker.js'), { workerData: {
         kind: options.kind, file: activeFile.path, password: options.password, headerPassword: options.headerPassword, index: options.index, data: options.data,
       } });
       ctx.contentWorker = worker;
@@ -517,8 +592,25 @@ if (!hasLock) {
         void ctx.contentWorker?.terminate(); ctx.contentWorker = undefined;
       }
     });
-    ipcMain.handle('startup-get', () => readStartup(app, process.platform, process.execPath, Boolean(process.defaultApp)));
-    ipcMain.handle('startup-set', (_event, enabled: unknown) => typeof enabled === 'boolean'
+    ipcMain.handle('startup-get', (event) => fromEvent(event) ? readStartup(app, process.platform, process.execPath, Boolean(process.defaultApp)) : { supported: false, enabled: false });
+    ipcMain.handle('app-version', (event) => fromEvent(event) ? app.getVersion() : '');
+    ipcMain.handle('open-diagnostics', async (event) => {
+      if (!fromEvent(event)) return { ok: false, message: '预览窗口已关闭。' };
+      try {
+        const directory = path.join(app.getPath('userData'), 'logs');
+        await mkdir(directory, { recursive: true });
+        const error = await shell.openPath(directory);
+        return error ? { ok: false, message: '无法打开日志目录。' } : { ok: true };
+      } catch { return { ok: false, message: '无法打开日志目录。' }; }
+    });
+    ipcMain.handle('check-for-updates', (event) => {
+      if (!fromEvent(event)) return { state: 'error', currentVersion: '', message: '预览窗口已关闭。' };
+      // Keep the renderer's offline-only session filter intact while using
+      // Chromium's system-proxy-aware networking for this explicit request.
+      const updates = session.fromPartition('quicklook-fast-update');
+      return checkForUpdates(app.getVersion(), (input, init) => updates.fetch(input instanceof URL ? input.toString() : input, init));
+    });
+    ipcMain.handle('startup-set', (event, enabled: unknown) => fromEvent(event) && typeof enabled === 'boolean'
       ? writeStartup(app, process.platform, process.execPath, Boolean(process.defaultApp), enabled)
       : readStartup(app, process.platform, process.execPath, Boolean(process.defaultApp)));
     ipcMain.handle('open-file', (event, filePath: string) => {
@@ -531,15 +623,15 @@ if (!hasLock) {
     ipcMain.on('set-pinned', (event, enabled: unknown) => { const ctx = fromEvent(event); if (ctx && typeof enabled === 'boolean') setPinned(ctx, enabled); });
     ipcMain.on('open-project-link', (event, destination: unknown) => {
       if (!fromEvent(event)) return;
-      const url = destination === 'organization' ? 'https://www.chaoleme.cn/' : destination === 'flyfish' ? 'https://github.com/flyfish-dev/file-viewer' : undefined;
+      const url = destination === 'organization' ? 'https://www.chaoleme.cn/' : destination === 'flyfish' ? 'https://github.com/flyfish-dev/file-viewer' : destination === 'releases' ? 'https://github.com/Chaoleme-Studio/quick_look_fast/releases/latest' : undefined;
       if (url) void shell.openExternal(url).catch(() => undefined);
     });
-    ipcMain.on('set-finder-shortcut', (_event, enabled: unknown) => {
-      if (process.platform !== 'darwin' || typeof enabled !== 'boolean') return;
+    ipcMain.on('set-finder-shortcut', (event, enabled: unknown) => {
+      if (!fromEvent(event) || process.platform !== 'darwin' || typeof enabled !== 'boolean') return;
       if (!enabled) { globalShortcut.unregister(finderShortcut); return; }
       if (globalShortcut.isRegistered(finderShortcut)) return;
       const registered = globalShortcut.register(finderShortcut, () => {
-        void import('./macos-finder').then(({ selectedFinderFile }) => selectedFinderFile()).then((selected) => {
+        void import('./platform/macos-finder').then(({ selectedFinderFile }) => selectedFinderFile()).then((selected) => {
           if (selected) { forgetSource(); openExternalFile(selected); }
         }).catch((error) => { console.error('Finder 集成失败', error); sendStatus('Finder 预览失败，请检查自动化权限。'); showWindow(ensureActive()); });
       });
@@ -549,7 +641,7 @@ if (!hasLock) {
       const ctx = fromEvent(event);
       if (!ctx || ctx !== active || ctx.pinned || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key) || !ctx.window.isVisible() || !activeSourceId) return;
       if (activeSourceId === 'nautilus') { linuxPreviewer?.navigate(key); return; }
-      if (bridge?.stdin.writable) bridge.stdin.write(`${JSON.stringify({ type: 'navigate', key, sourceId: activeSourceId })}\n`);
+      writeBridge({ type: 'navigate', key, sourceId: activeSourceId });
     });
 
     const first = ensureActive();
@@ -566,7 +658,7 @@ if (!hasLock) {
     startWindowsBridge();
     initialized = true;
     if (process.platform === 'linux') {
-      void import('./linux-previewer').then(({ startLinuxPreviewer }) => startLinuxPreviewer({
+      void import('./platform/linux/previewer').then(({ startLinuxPreviewer }) => startLinuxPreviewer({
         open(filePath, closeIfShown) {
           const ctx = ensureActive();
           if (closeIfShown && ctx.currentPath && ctx.window.isVisible()) { hideWindow(ctx); return; }
@@ -589,6 +681,7 @@ if (!hasLock) {
   }).catch((error) => { console.error('QuickLook Fast 启动失败', error); app.quit(); });
 
   app.on('before-quit', () => {
+    diagnostic('app-quit');
     isQuitting = true; bridge?.kill(); linuxPreviewer?.close(); globalShortcut.unregisterAll(); fileServer?.close(); tray?.destroy();
   });
   app.on('window-all-closed', () => { if (isQuitting) app.quit(); });

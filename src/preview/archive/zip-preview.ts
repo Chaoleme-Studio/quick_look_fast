@@ -1,6 +1,7 @@
 import { readZipDirectory, type ZipDirectory, type ZipEntry, type ZipNameEncoding } from './zip-directory.ts';
 import { extractZipEntry } from './zip-extraction.ts';
-import { requestPassword } from './password-prompt.ts';
+import { requestPassword } from '../../ui/password-prompt.ts';
+import { createSidebarToggle } from '../../ui/sidebar-toggle.ts';
 
 interface ZipSource { name: string; url: string; size: number }
 interface Tree { name: string; folders: Map<string, Tree>; files: ZipEntry[] }
@@ -103,7 +104,8 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
   sidebar.append(heading, controls, list);
   const content = document.createElement('section'); content.className = 'zip-content';
   const contentHeader = document.createElement('div'); contentHeader.className = 'zip-content-heading';
-  contentHeader.textContent = '选择一个文件进行预览';
+  const contentTitle = document.createElement('span'); contentTitle.className = 'preview-detail-title'; contentTitle.textContent = '选择一个文件进行预览';
+  const sidebarToggle = createSidebarToggle(root, sidebar); contentHeader.append(sidebarToggle.button, contentTitle);
   const contentBody = document.createElement('div'); contentBody.className = 'zip-content-body';
   const placeholder = document.createElement('p'); placeholder.className = 'zip-empty'; placeholder.textContent = '展开左侧文件夹，选择要查看的文件';
   contentBody.append(placeholder); content.append(contentHeader, contentBody);
@@ -130,7 +132,7 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
     clearEntry();
     const version = selected;
     const operation = new AbortController(); entryAbort = operation;
-    contentHeader.textContent = entry.name;
+    contentTitle.textContent = entry.name;
     const status = document.createElement('p'); status.className = 'zip-empty'; status.textContent = '正在读取包内文件…';
     contentBody.replaceChildren(status);
     try {
@@ -232,7 +234,7 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
     if (directory) backend.close?.(directory);
     directory = undefined;
     const operation = new AbortController(); readAbort = operation;
-    contentHeader.textContent = '选择一个文件进行预览'; contentBody.replaceChildren(placeholder);
+    contentTitle.textContent = '选择一个文件进行预览'; contentBody.replaceChildren(placeholder);
     summary.textContent = '正在读取目录…'; list.replaceChildren();
     try {
       let result: ArchiveDirectory;

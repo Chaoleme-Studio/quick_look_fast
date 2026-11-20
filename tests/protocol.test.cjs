@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
-const { fileResponse, parseRange } = require('../dist-electron/protocol.js');
-const { startFileServer } = require('../dist-electron/file-server.js');
+const { fileResponse, parseRange } = require('../build/dist-electron/files/protocol.js');
+const { startFileServer } = require('../build/dist-electron/files/file-server.js');
 
 const directory = mkdtempSync(path.join(tmpdir(), 'slowlook-test-'));
 const filePath = path.join(directory, 'sample.txt');

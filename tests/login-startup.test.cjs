@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readStartup, writeStartup } = require('../dist-electron/login-startup.js');
+const { readStartup, writeStartup } = require('../build/dist-electron/platform/login-startup.js');
 
 test('login startup is opt-in, targets the current executable and reports the OS state', () => {
   let enabled = false;

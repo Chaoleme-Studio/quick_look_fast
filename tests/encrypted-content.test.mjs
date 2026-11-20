@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import officeCrypto from 'officecrypto-tool';
 
-const worker = new URL('../dist-electron/content-worker.js', import.meta.url);
+const worker = new URL('../build/dist-electron/files/content-worker.js', import.meta.url);
 const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 function run(task, workerFile = worker) {
   return new Promise((resolve, reject) => {
@@ -61,9 +61,10 @@ test('encrypted DOCX, XLSX and PPTX decrypt locally and reject a wrong password'
 });
 
 const packagedWorker = process.env.SLOWLOOK_PORTABLE_DIST
-  ? path.resolve(process.env.SLOWLOOK_PORTABLE_DIST, '../dist-electron/content-worker.js')
-  : fileURLToPath(new URL('../artifacts/SlowLook-win-x64/resources/app/dist-electron/content-worker.js', import.meta.url));
-test('packaged worker includes its WASM and Office dependencies', { skip: !existsSync(packagedWorker) }, async () => {
+  ? path.resolve(process.env.SLOWLOOK_PORTABLE_DIST, '../dist-electron/files/content-worker.js')
+  : undefined;
+test('packaged worker includes its WASM and Office dependencies', { skip: !packagedWorker }, async () => {
+  assert.ok(existsSync(packagedWorker), 'configured portable worker is missing');
   const rar = await run({ kind: 'rar-list', file: fixture('HeaderEnc1234.rar'), headerPassword: '1234' }, packagedWorker);
   assert.equal(rar.ok, true); assert.equal(rar.headerEncrypted, true);
   const plain = await readFile(fixture('office-sample.xlsx'));

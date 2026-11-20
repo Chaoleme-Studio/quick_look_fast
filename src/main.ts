@@ -1,25 +1,19 @@
 import './style.css';
-import { selectExtraRenderers } from './extra-renderers';
-import { FORCE_INSPECTION_EXTENSIONS, formatHexSample, isProbablyText, readHead } from './file-inspection';
-import { MarkdownOutline } from './markdown-outline';
-import { mountFolderPreview, type FolderFile, type FolderPage, type FolderPreview, type FolderView } from './folder-preview';
-import { installImageWheelZoom } from './image-wheel-zoom';
-import { mountBrowserImage, supportsBrowserImage } from './browser-image';
-import { mountZipPreview, mountRarPreview, type ContentRequest, type ContentResponse } from './zip-preview';
-import { requestPassword } from './password-prompt';
-import { mountAudioWaveform } from './audio-waveform';
+import { selectExtraRenderers } from './preview/extra-renderers';
+import { FORCE_INSPECTION_EXTENSIONS, formatHexSample, isProbablyText, readHead } from './preview/file-inspection';
+import { MarkdownOutline } from './preview/text/markdown-outline';
+import { mountFolderPreview, type FolderFile, type FolderPage, type FolderPreview, type FolderView } from './preview/folder/folder-preview';
+import { installImageWheelZoom } from './preview/image/image-wheel-zoom';
+import { mountBrowserImage, supportsBrowserImage } from './preview/image/browser-image';
+import { formatDimensions, isImageFile, readImageDimensions, type ImageDimensions } from './preview/image/image-metadata';
+import { showNestedImageDimensions, watchRenderedDimensions } from './preview/image/rendered-dimensions';
+import { mountZipPreview, mountRarPreview, type ContentRequest, type ContentResponse } from './preview/archive/zip-preview';
+import { requestPassword } from './ui/password-prompt';
+import { fileInfoDetails, formatSize, showPhotoExif, type PreviewFile } from './ui/file-info';
+import { mountAudioWaveform } from './preview/media/audio-waveform';
+import { mountHtmlPreview, type HtmlPreview, type HtmlPreviewSource } from './preview/web/html-preview';
 import type { ViewerController, ViewerOptions, ViewerState } from '@file-viewer/web-full';
 import type { RendererDefinition } from '@file-viewer/core';
-
-interface PreviewFile {
-  url: string;
-  name: string;
-  size: number;
-  path?: string;
-  modifiedAt?: string;
-  createdAt?: string;
-  shortcut?: { target?: string; description?: string };
-}
 
 declare global {
   interface Window {
@@ -29,6 +23,7 @@ declare global {
       selectFolder(): Promise<void>;
       readDirectory(id: string, offset: number): Promise<FolderPage>;
       openDirectoryFile(id: string, purpose: 'thumbnail' | 'preview'): Promise<FolderFile>;
+      resolveMarkdownImage(url: string, reference: string): Promise<string | undefined>;
       releaseDirectoryPreview(folderId: string): void;
       contentTask(request: ContentRequest): Promise<ContentResponse>;
       cancelContent(url: string): void;
@@ -37,7 +32,10 @@ declare global {
       hide(): void;
       navigate(key: string): void;
       setPinned(enabled: boolean): void;
-      openProjectLink(destination: 'organization' | 'flyfish'): void;
+      openProjectLink(destination: 'organization' | 'flyfish' | 'releases'): void;
+      appVersion(): Promise<string>;
+      openDiagnostics(): Promise<{ ok: boolean; message?: string }>;
+      checkForUpdates(): Promise<{ state: 'available' | 'up-to-date'; currentVersion: string; latestVersion: string } | { state: 'error'; currentVersion: string; message: string }>;
       onPinState(listener: (pinned: boolean) => void): void;
       getStartup(): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
       setStartup(enabled: boolean): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
@@ -67,6 +65,7 @@ const settingsGroups = [
     { id: 'line-numbers', title: '显示行号', detail: '为代码和纯文本显示行号与行数' },
     { id: 'wrap-lines', title: '自动换行', detail: '长行按窗口宽度换行；大文件片段保持横向滚动' },
     { id: 'markdown-toc', title: 'Markdown 目录', detail: '在文档旁显示章节，点击即可跳转' },
+    { id: 'html-scripts', title: 'HTML 网页运行脚本', detail: '默认启用，网页在隔离区域运行；关闭后仅显示静态页面' },
   ] },
   { id: 'folder', label: '文件夹', eyebrow: 'FOLDERS', description: '按需浏览文件夹和其中的文件', rows: [
     { id: 'folder-preview', title: '文件夹内文件预览', detail: '选择文件后在右侧显示内容，关闭后使用完整目录宽度' },
@@ -122,7 +121,7 @@ app.innerHTML = `
           ${settingsGroups.map((group, index) => `<button type="button" role="tab" id="tab-${group.id}" aria-controls="group-${group.id}" aria-selected="${index === 0}" data-settings-tab="${group.id}" tabindex="${index === 0 ? '0' : '-1'}"><span class="settings-tab-dot"></span>${group.label}</button>`).join('')}
         </nav><div class="settings-sidebar-footer"><span class="status-dot"></span>更改自动保存</div></aside>
         <div class="settings-body"><button id="settings-close" class="close-action settings-close" type="button" aria-label="关闭设置">×</button>
-          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card">${group.rows.map((row) => `<label ${'rowId' in row ? `id="${row.rowId}" hidden` : ''} class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? '<div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>' : ''}</div>${group.id === 'integration' ? '<p class="settings-note">当前状态：<span id="integration-current-status">等待文件管理器操作</span><br>支持的文件管理器和权限随系统而异，详情见使用文档。</p>' : ''}</section>`).join('')}
+          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card">${group.rows.map((row) => `<label ${'rowId' in row ? `id="${row.rowId}" hidden` : ''} class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? `<div class="setting-row about-row"><span><strong>版本与更新</strong><small id="app-version">正在读取当前版本…</small><small id="update-status" role="status" aria-live="polite">点击检查更新时才会访问 GitHub。</small></span><span class="about-actions"><button id="check-update" type="button" class="about-link">检查更新</button><button type="button" class="about-link" data-external-link="releases">手动下载 ↗</button></span></div><div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>` : ''}</div>${group.id === 'integration' ? '<p class="settings-note">当前状态：<span id="integration-current-status">等待文件管理器操作</span><br>支持的文件管理器和权限随系统而异，详情见使用文档。</p>' : ''}</section>`).join('')}
         </div>
       </section>
     </div>
@@ -159,12 +158,14 @@ const autoplaySetting = element<HTMLInputElement>('#settings-autoplay');
 const lineNumbersSetting = element<HTMLInputElement>('#settings-line-numbers');
 const wrapLinesSetting = element<HTMLInputElement>('#settings-wrap-lines');
 const markdownTocSetting = element<HTMLInputElement>('#settings-markdown-toc');
+const htmlScriptsSetting = element<HTMLInputElement>('#settings-html-scripts');
 const finderShortcutSetting = element<HTMLInputElement>('#settings-finder-shortcut');
 const folderPreviewSetting = element<HTMLInputElement>('#settings-folder-preview');
 const folderThumbnailsSetting = element<HTMLInputElement>('#settings-folder-thumbnails');
 const pinButton = element<HTMLButtonElement>('#pin-window');
 let controller: ViewerController | undefined;
 const nestedControllers = new Set<ViewerController>();
+const htmlPreviews = new Set<HtmlPreview>();
 let removeMainImageWheel: (() => void) | undefined;
 let media: HTMLMediaElement | undefined;
 let disposeMediaVisual: (() => void) | undefined;
@@ -174,6 +175,9 @@ let refreshFolderText: (() => void) | undefined;
 let disposeLargeText: (() => void) | undefined;
 let probeRead: AbortController | undefined;
 let infoRead: AbortController | undefined;
+let imageRead: AbortController | undefined;
+let stopWatchingImage: (() => void) | undefined;
+let currentImageSize: ImageDimensions | undefined;
 let currentPreview: PreviewFile | undefined;
 let markdownOutline: MarkdownOutline | undefined;
 let folderView: FolderView | undefined;
@@ -193,6 +197,7 @@ autoplaySetting.checked = savedSetting('autoplay');
 lineNumbersSetting.checked = savedSetting('lineNumbers');
 wrapLinesSetting.checked = savedSetting('wrapLines', false);
 markdownTocSetting.checked = savedSetting('markdownToc');
+htmlScriptsSetting.checked = savedSetting('htmlScripts');
 finderShortcutSetting.checked = savedSetting('finderShortcut', false);
 folderPreviewSetting.checked = savedSetting('folderPreview');
 folderThumbnailsSetting.checked = savedSetting('folderThumbnails');
@@ -222,13 +227,14 @@ function syncPin(): void {
 }
 syncPin();
 window.slowLook.onPinState((value) => { pinned = value; syncPin(); });
-for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [finderShortcutSetting, 'finderShortcut'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const) {
+for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [finderShortcutSetting, 'finderShortcut'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const) {
   input.addEventListener('change', () => {
     try { window.localStorage.setItem(`slowlook.${key}`, String(input.checked)); } catch { /* use this session's value */ }
     if (key === 'autoplay' && input.checked && media) void media.play().catch(() => undefined);
     if (key === 'finderShortcut' && window.slowLook.platform === 'darwin') window.slowLook.setFinderShortcut(input.checked);
     if (key === 'folderPreview' || key === 'folderThumbnails') folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
     if (key === 'markdownToc') setupMarkdownToc();
+    if (key === 'htmlScripts') for (const view of htmlPreviews) view.setScriptsEnabled(input.checked);
     if (key === 'lineNumbers' || key === 'wrapLines') {
       refreshLargeText?.();
       refreshFolderText?.();
@@ -239,14 +245,58 @@ for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting,
 }
 document.querySelectorAll<HTMLButtonElement>('[data-external-link]').forEach((button) => button.addEventListener('click', () => {
   const destination = button.dataset.externalLink;
-  if (destination === 'organization' || destination === 'flyfish') window.slowLook.openProjectLink(destination);
+  if (destination === 'organization' || destination === 'flyfish' || destination === 'releases') window.slowLook.openProjectLink(destination);
 }));
+const updateButton = element<HTMLButtonElement>('#check-update');
+const updateStatus = element('#update-status');
+void window.slowLook.appVersion().then((version) => { element('#app-version').textContent = version ? `当前版本 v${version}` : '无法读取当前版本'; }).catch(() => { element('#app-version').textContent = '无法读取当前版本'; });
+updateButton.addEventListener('click', async () => {
+  updateButton.disabled = true;
+  updateStatus.textContent = '正在检查 GitHub 的正式版本…';
+  try {
+    const result = await window.slowLook.checkForUpdates();
+    updateStatus.textContent = result.state === 'available' ? `发现新版本 v${result.latestVersion}，可手动下载。`
+      : result.state === 'up-to-date' ? `已是最新正式版本（v${result.latestVersion}）。` : 'message' in result ? result.message : '检查失败，请稍后重试。';
+  } catch { updateStatus.textContent = '检查失败，请稍后重试。'; }
+  finally { updateButton.disabled = false; }
+});
+const diagnosticRow = document.createElement('div'); diagnosticRow.className = 'setting-row about-row';
+diagnosticRow.innerHTML = '<span><strong>运行诊断</strong><small id="diagnostics-status">日志保存在本机，不记录预览文件内容。</small></span><button type="button" class="about-link" id="open-diagnostics">打开日志目录 ↗</button>';
+element('#group-about .settings-card').append(diagnosticRow);
+element<HTMLButtonElement>('#open-diagnostics').addEventListener('click', async () => {
+  try { const result = await window.slowLook.openDiagnostics(); if (!result.ok) element('#diagnostics-status').textContent = result.message || '无法打开日志目录。'; }
+  catch { element('#diagnostics-status').textContent = '无法打开日志目录。'; }
+});
 pinButton.addEventListener('click', () => {
   window.slowLook.setPinned(!pinned);
 });
 
 function textOptions(): NonNullable<ViewerOptions['text']> {
   return { lineNumbers: lineNumbersSetting.checked, wrapLongLines: wrapLinesSetting.checked };
+}
+
+function trackedHtmlPreview(target: HTMLElement, source: HtmlPreviewSource, onReady: () => void): () => void {
+  const view = mountHtmlPreview(target, source, htmlScriptsSetting.checked, onReady);
+  htmlPreviews.add(view);
+  return () => { htmlPreviews.delete(view); view.dispose(); };
+}
+
+function loadMarkdownImages(mount: HTMLElement, url: string, isCurrent: () => boolean): void {
+  const shadow = mount.shadowRoot;
+  const article = shadow?.querySelector('.markdown-body');
+  if (!shadow || !article) return;
+  const style = document.createElement('style');
+  style.textContent = '.markdown-body img{max-width:100%;height:auto}';
+  shadow.append(style);
+  for (const image of Array.from(article.querySelectorAll<HTMLImageElement>('img[src]')).slice(0, 128)) {
+    const reference = image.getAttribute('src') || '';
+    image.removeAttribute('srcset');
+    if (/^(?:data:|blob:)/i.test(reference)) continue;
+    image.removeAttribute('src');
+    void window.slowLook.resolveMarkdownImage(url, reference).then((resolved) => {
+      if (resolved && isCurrent() && image.isConnected) image.src = resolved;
+    }).catch(() => undefined);
+  }
 }
 
 function stopMedia(): void {
@@ -277,7 +327,12 @@ function clearLargeText(): void {
   refreshLargeText = undefined;
 }
 
-function clearFolder(): void {
+function disposePreviewViews(): void {
+  imageRead?.abort();
+  imageRead = undefined;
+  stopWatchingImage?.();
+  stopWatchingImage = undefined;
+  currentImageSize = undefined;
   removeMainImageWheel?.();
   removeMainImageWheel = undefined;
   folderView?.dispose();
@@ -504,48 +559,6 @@ async function loadModules(filename: string): Promise<{ viewer: typeof import('@
   return { viewer, renderers: renderers as unknown as ViewerOptions['renderers'] };
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let size = bytes / 1024;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size >= 10 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
-}
-
-function infoRow(list: HTMLElement, label: string, value: unknown): void {
-  if (value === undefined || value === null || value === '') return;
-  const term = document.createElement('dt');
-  const detail = document.createElement('dd');
-  term.textContent = label;
-  detail.textContent = value instanceof Date ? value.toLocaleString('zh-CN') : String(value);
-  list.append(term, detail);
-}
-
-function formatDate(value?: string): string | undefined {
-  if (!value) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? undefined : date.toLocaleString('zh-CN');
-}
-
-function fileInfoDetails(file: PreviewFile): HTMLElement {
-  const list = document.createElement('dl');
-  list.className = 'metadata-list';
-  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toUpperCase() : '';
-  infoRow(list, '名称', file.name);
-  infoRow(list, '类型', extension ? `${extension} 文件` : '文件');
-  infoRow(list, '大小', `${formatSize(file.size)} · ${file.size.toLocaleString()} 字节`);
-  infoRow(list, '修改时间', formatDate(file.modifiedAt));
-  infoRow(list, '创建时间', formatDate(file.createdAt));
-  infoRow(list, '位置', file.path);
-  infoRow(list, '快捷方式目标', file.shortcut?.target);
-  infoRow(list, '说明', file.shortcut?.description);
-  return list;
-}
-
 function showMetadataFallback(file: PreviewFile, reason: string, sample?: Uint8Array): void {
   stopTextRead();
   clearLargeText();
@@ -565,7 +578,7 @@ function showMetadataFallback(file: PreviewFile, reason: string, sample?: Uint8A
   heading.textContent = file.name;
   const note = document.createElement('p');
   note.textContent = reason;
-  card.append(icon, heading, note, fileInfoDetails(file));
+  card.append(icon, heading, note, fileInfoDetails(file, currentImageSize || (isImageFile(file.name) ? 'unknown' : undefined)));
   if (sample?.length) {
     const label = document.createElement('div');
     label.className = 'hex-label';
@@ -585,50 +598,36 @@ function showMetadataFallback(file: PreviewFile, reason: string, sample?: Uint8A
   }
 }
 
-async function showFileInfo(file: PreviewFile): Promise<void> {
-  infoRead?.abort();
-  const operation = new AbortController();
-  infoRead = operation;
-  infoPanel.hidden = false;
-  infoContent.replaceChildren(fileInfoDetails(file));
-  if (!/\.(jpe?g|tiff?|png|webp|heic|heif|avif)$/i.test(file.name)) return;
-  const section = document.createElement('section');
-  section.className = 'exif-section';
-  const heading = document.createElement('h3');
-  heading.textContent = '照片信息 · EXIF';
-  const status = document.createElement('p');
-  status.textContent = '正在读取照片信息…';
-  section.append(heading, status);
-  infoContent.append(section);
-  try {
-    const [bytes, exifr] = await Promise.all([readHead(file.url, file.size, 512 * 1024, operation.signal), import('exifr')]);
-    const parseExif = exifr.parse || exifr.default.parse;
-    const tags = await parseExif(bytes, { pick: ['Make', 'Model', 'LensModel', 'DateTimeOriginal', 'ISO', 'FNumber', 'ExposureTime', 'FocalLength', 'PixelXDimension', 'PixelYDimension', 'ImageWidth', 'ImageHeight'] });
-    if (operation.signal.aborted || currentPreview !== file) return;
-    const list = document.createElement('dl');
-    list.className = 'metadata-list';
-    if (tags) {
-      infoRow(list, '相机', [tags.Make, tags.Model].filter(Boolean).join(' '));
-      infoRow(list, '镜头', tags.LensModel);
-      infoRow(list, '拍摄时间', tags.DateTimeOriginal);
-      infoRow(list, '感光度', tags.ISO);
-      infoRow(list, '光圈', tags.FNumber ? `f/${tags.FNumber}` : undefined);
-      infoRow(list, '曝光时间', tags.ExposureTime ? `${tags.ExposureTime} 秒` : undefined);
-      infoRow(list, '焦距', tags.FocalLength ? `${tags.FocalLength} mm` : undefined);
-      const width = tags.PixelXDimension || tags.ImageWidth;
-      const height = tags.PixelYDimension || tags.ImageHeight;
-      infoRow(list, '尺寸', width && height ? `${width} × ${height}` : undefined);
-    }
-    if (list.childElementCount) status.replaceWith(list);
-    else status.textContent = '没有找到可显示的照片信息。';
-  } catch {
-    if (!operation.signal.aborted) status.textContent = '未能读取照片信息，部分格式或文件头超出读取范围。';
-  }
-}
-
 function clearMarkdownToc(): void {
   markdownOutline?.destroy();
   markdownOutline = undefined;
+}
+
+function reportImageSize(file: PreviewFile, size: ImageDimensions): void {
+  if (currentPreview !== file) return;
+  if (currentImageSize?.width === size.width && currentImageSize.height === size.height && currentImageSize.unit === size.unit) return;
+  currentImageSize = size;
+  sizeLabel.textContent = `${formatDimensions(size)} · ${formatSize(file.size)}`;
+  if (!infoPanel.hidden) infoContent.firstElementChild?.replaceWith(fileInfoDetails(file, size));
+}
+
+function showFileInfo(file: PreviewFile): void {
+  infoRead?.abort();
+  infoPanel.hidden = false;
+  const image = isImageFile(file.name);
+  infoContent.replaceChildren(fileInfoDetails(file, image ? currentImageSize || 'unknown' : undefined));
+  if (!image) return;
+  const operation = new AbortController();
+  infoRead = operation;
+  void showPhotoExif(infoContent, file, operation.signal, size => {
+    if (!currentImageSize) reportImageSize(file, size);
+  }).finally(() => { if (infoRead === operation) infoRead = undefined; });
+}
+
+function hideFileInfo(): void {
+  infoRead?.abort();
+  infoRead = undefined;
+  infoPanel.hidden = true;
 }
 
 function setupMarkdownToc(): void {
@@ -685,6 +684,13 @@ function clarifySearchCount(mount: HTMLElement): void {
 }
 
 async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, signal: AbortSignal, archiveOwner = currentPreview): Promise<(() => void) | undefined> {
+  if (/\.(?:html|htm)$/i.test(name)) {
+    if (signal.aborted) return undefined;
+    const cleanup = trackedHtmlPreview(target, { url: '', size: blob.size, blob }, () => undefined);
+    const stop = (): void => cleanup();
+    signal.addEventListener('abort', stop, { once: true });
+    return () => { signal.removeEventListener('abort', stop); cleanup(); };
+  }
   if (/\.(docx|xlsx|pptx)$/i.test(name) && blob.size >= 8) {
     const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
     if (signal.aborted) return undefined;
@@ -733,11 +739,13 @@ async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, sig
   const removeWheel = /\.(?:png|jpe?g|gif|webp|bmp|avif|svg|ico|tiff?|heic|heif|psd)$/i.test(name)
     ? installImageWheelZoom(target, () => nested) : () => undefined;
   let disposed = false;
-  const dispose = (): void => { if (!disposed) { disposed = true; nestedControllers.delete(nested); removeWheel(); nested.destroy(); } };
+  let stopImageSize: (() => void) | undefined;
+  const dispose = (): void => { if (!disposed) { disposed = true; stopImageSize?.(); nestedControllers.delete(nested); removeWheel(); nested.destroy(); } };
   signal.addEventListener('abort', dispose, { once: true });
   try {
     await nested.load({ file: new File([blob], name), filename: name, size: blob.size });
     if (signal.aborted) { dispose(); return undefined; }
+    if (isImageFile(name)) stopImageSize = showNestedImageDimensions(target, mount, { name, size: blob.size, blob }, signal);
     return () => { signal.removeEventListener('abort', dispose); dispose(); };
   } catch (error) {
     signal.removeEventListener('abort', dispose); dispose(); throw error;
@@ -792,6 +800,9 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
     return () => { signal.removeEventListener('abort', stop); stop(); };
   };
   const archiveEntry = (name: string, blob: Blob, mount: HTMLElement, childSignal: AbortSignal) => renderZipEntry(name, blob, mount, childSignal, file);
+  if (/\.(?:html|htm)$/i.test(file.name)) {
+    return disposeOnAbort(trackedHtmlPreview(target, file, () => undefined));
+  }
   if (/\.(zip|rar)$/i.test(file.name)) {
     const cleanup = /\.zip$/i.test(file.name)
       ? mountZipPreview(target, file, () => undefined, archiveEntry)
@@ -814,7 +825,7 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
         const note = document.createElement('p'); note.textContent = '图片无法解码，显示文件信息。';
         contents.append(heading, note, fileInfoDetails(file)); card.append(contents); target.replaceChildren(card);
       });
-    });
+    }, true);
     return disposeOnAbort(() => { cleanup(); fallback?.(); });
   }
   const kind = mediaKind(file.name);
@@ -914,8 +925,15 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
   nestedControllers.add(nested);
   clarifySearchCount(mount);
   const removeWheel = /\.(?:png|jpe?g|gif|webp|bmp|avif|tiff?|heic|heif|psd|svg|ico)$/i.test(filename) ? installImageWheelZoom(target, () => nested) : () => undefined;
-  const cleanup = disposeOnAbort(() => { nestedControllers.delete(nested); removeWheel(); nested.destroy(); });
-  try { await nested.load({ url: file.url, filename, size: file.size }); if (signal.aborted) cleanup(); return cleanup; }
+  let stopImageSize: (() => void) | undefined;
+  const cleanup = disposeOnAbort(() => { stopImageSize?.(); nestedControllers.delete(nested); removeWheel(); nested.destroy(); });
+  try {
+    await nested.load({ url: file.url, filename, size: file.size });
+    if (signal.aborted) cleanup();
+    else if (/\.(?:md|markdown)$/i.test(filename)) loadMarkdownImages(mount, file.url, () => !signal.aborted);
+    else if (isImageFile(filename)) stopImageSize = showNestedImageDimensions(target, mount, file, signal);
+    return cleanup;
+  }
   catch (error) { cleanup(); throw error; }
 }
 
@@ -928,6 +946,15 @@ async function previewFile(file: PreviewFile): Promise<void> {
   nameLabel.textContent = file.name;
   nameLabel.title = file.name;
   sizeLabel.textContent = formatSize(file.size);
+  if (isImageFile(file.name)) {
+    imageRead?.abort();
+    currentImageSize = undefined;
+    const operation = new AbortController();
+    imageRead = operation;
+    void readImageDimensions(file, operation.signal).then(size => {
+      if (size && !operation.signal.aborted && current === generation) reportImageSize(file, size);
+    }).catch(() => {});
+  }
   welcome.hidden = true;
   preview.hidden = false;
   loading.hidden = false;
@@ -935,6 +962,14 @@ async function previewFile(file: PreviewFile): Promise<void> {
   resetLoading();
   if (/\.lnk$/i.test(file.name)) {
     showMetadataFallback(file, '这是一个快捷方式，显示它的文件信息和目标。');
+    return;
+  }
+  if (/\.(?:html|htm)$/i.test(file.name)) {
+    disposeZip = trackedHtmlPreview(viewerHost, file, () => {
+      if (current !== generation) return;
+      loading.hidden = true;
+      if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
+    });
     return;
   }
   // ZIP uses range-based reads; RAR uses a seekable WASM worker.
@@ -952,8 +987,9 @@ async function previewFile(file: PreviewFile): Promise<void> {
   }
   if (supportsBrowserImage(file.name)) {
     resetLoading('正在读取图片');
-    disposeZip = mountBrowserImage(viewerHost, file.url, () => {
+    disposeZip = mountBrowserImage(viewerHost, file.url, (size) => {
       if (current !== generation) return;
+      reportImageSize(file, size);
       loading.hidden = true;
       if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
     }, () => {
@@ -1049,7 +1085,22 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
       controller.subscribe((state) => onViewerState(state, current));
     }
     await controller.load({ url: file.url, filename: viewerFilename, size: file.size });
-    if (current === generation) setupMarkdownToc();
+    if (current === generation) {
+      if (isImageFile(viewerFilename) && !/\.svg$/i.test(viewerFilename)) {
+        const mount = viewerHost.querySelector<HTMLElement>('.viewer-root');
+        if (mount) {
+          stopWatchingImage?.();
+          stopWatchingImage = watchRenderedDimensions(mount, size => {
+            if (current === generation) reportImageSize(file, size);
+          });
+        }
+      }
+      if (/\.(?:md|markdown)$/i.test(viewerFilename)) {
+        const mount = viewerHost.querySelector<HTMLElement>('.viewer-root');
+        if (mount) loadMarkdownImages(mount, file.url, () => current === generation);
+      }
+      setupMarkdownToc();
+    }
   } catch (error) {
     if (current === generation) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1066,7 +1117,7 @@ function clearPreview(): void {
   infoButton.hidden = true;
   infoPanel.hidden = true;
   clearMarkdownToc();
-  clearFolder();
+  disposePreviewViews();
   stopProbe();
   stopTextRead();
   clearLargeText();
@@ -1089,7 +1140,7 @@ window.slowLook.onStart((file) => {
   infoButton.hidden = true;
   infoPanel.hidden = true;
   clearMarkdownToc();
-  clearFolder();
+  disposePreviewViews();
   stopProbe();
   stopTextRead();
   clearLargeText();
@@ -1153,7 +1204,7 @@ window.slowLook.onError((message) => {
   infoButton.hidden = true;
   infoPanel.hidden = true;
   clearMarkdownToc();
-  clearFolder();
+  disposePreviewViews();
   stopProbe();
   stopTextRead();
   clearLargeText();
@@ -1168,10 +1219,10 @@ element('#choose-welcome').addEventListener('click', () => { void window.slowLoo
 element('#choose-folder').addEventListener('click', () => { void window.slowLook.selectFolder(); });
 element('#close').addEventListener('click', () => window.slowLook.hide());
 infoButton.addEventListener('click', () => {
-  if (!infoPanel.hidden) { infoPanel.hidden = true; return; }
-  if (currentPreview) void showFileInfo(currentPreview);
+  if (!infoPanel.hidden) { hideFileInfo(); return; }
+  if (currentPreview) showFileInfo(currentPreview);
 });
-element('#file-info-close').addEventListener('click', () => { infoPanel.hidden = true; infoButton.focus(); });
+element('#file-info-close').addEventListener('click', () => { hideFileInfo(); infoButton.focus(); });
 element('#settings-open').addEventListener('click', () => {
   settingsPanel.hidden = false;
   element('[role="tab"][aria-selected="true"]').focus();
@@ -1209,7 +1260,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Escape' && !infoPanel.hidden) {
     event.preventDefault();
-    infoPanel.hidden = true;
+    hideFileInfo();
     infoButton.focus();
     return;
   }
