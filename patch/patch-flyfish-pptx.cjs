@@ -13,7 +13,7 @@ if (version !== '3.3.4') throw new Error(`Reassess the PPTX inset patch for Flyf
 const worker = path.join(root, 'build', 'dist', 'file-viewer', 'vendor', 'pptx', 'pptx.worker.js');
 let source = fs.readFileSync(worker, 'utf8');
 const marker = 'function __slowLookPptxInset(';
-const notice = '/* QuickLook Fast modified this Flyfish PPTX Worker: text, progressive styles, gradient stops and arrow geometry; see THIRD_PARTY.md and patch/patch-flyfish-pptx.cjs. */\n';
+const notice = '/* QuickLook Fast modified this Flyfish PPTX Worker: text, progressive styles, gradient stops, arrows and chart metadata; see THIRD_PARTY.md and patch/patch-flyfish-pptx.cjs. */\n';
 const expression = /"box-sizing:border-box;padding:"\+([\w$]+)\(([\w$]+)\.top,"y",([\w$]+)\)\+"px "\+\1\(\2\.right,"x",\3\)\+"px "\+\1\(\2\.bottom,"y",\3\)\+"px "\+\1\(\2\.left,"x",\3\)\+"px;"/g;
 if (!source.includes(marker)) {
   const matches = [...source.matchAll(expression)];
@@ -108,6 +108,49 @@ if (!source.includes('/* __slowLookArrowGeometry */')) {
   }
   source = '/* __slowLookArrowGeometry */\n' + source;
 }
+
+// WPS writes chart axis IDs as signed 32-bit values. Office accepts these as
+// unsigned IDs; dropping them also discards axis fonts, bounds and direction.
+const unsignedAxisId = 'Bh=e=>/^\\d{1,10}$/.test(String(e))&&Number(e)<=4294967295?String(Number(e)):void 0';
+const compatibleAxisId = 'Bh=e=>{let s=String(e),n=Number(s);return /^-?\\d{1,10}$/.test(s)&&n>=-2147483648&&n<=4294967295?String(n<0?n+4294967296:n):void 0}';
+if (!source.includes(compatibleAxisId)) {
+  if (source.split(unsignedAxisId).length !== 2) throw new Error('The Flyfish PPTX axis ID parser changed; reassess signed chart IDs.');
+  source = source.replace(unsignedAxisId, compatibleAxisId);
+}
+
+// XML character references in cached chart labels reach the model encoded.
+// Decode once as XML (not HTML), so a literal &amp;#10; stays literal text.
+if (!source.includes('function __slowLookChartText(')) {
+  const cacheValue = 'r.set(n,i!=null&&typeof i=="object"?"":i)';
+  if (source.split(cacheValue).length !== 2) throw new Error('The Flyfish PPTX chart cache parser changed; reassess line breaks.');
+  const helper = String.raw`function __slowLookChartText(s){const names={amp:"&",lt:"<",gt:">",quot:'"',apos:"'"};return s.replace(/&(amp|lt|gt|quot|apos|#(?:[xX][\da-fA-F]{1,6}|\d{1,7}));/g,(all,ref)=>{if(ref[0]!=="#")return names[ref];const n=ref[1].toLowerCase()==="x"?parseInt(ref.slice(2),16):Number(ref.slice(1));return n>0&&n<=1114111&&(n<55296||n>57343)?String.fromCodePoint(n):all})}`;
+  source = helper + '\n' +
+    source.replace(cacheValue, 'r.set(n,i!=null&&typeof i==="object"?"":typeof i==="string"?__slowLookChartText(i):i)');
+}
+
+// Line charts specify their series color on a:ln rather than a:solidFill.
+if (!source.includes('/* __slowLookLineSeriesColor */')) {
+  const replacements = [
+    ['function Dm(e,r,t,a){', 'function Dm(e,r,t,a,chartType){'],
+    ['M=Dm(g,s,r,t);', 'M=Dm(g,s,r,t,m);'],
+    ['color:o(d==null?void 0:d["c:spPr"]),...d!=null&&d["c:dLbls"]',
+      'color:chartType==="lineChart"?(o(d?.["c:spPr"]?.["a:ln"])??o(d?.["c:spPr"])):o(d?.["c:spPr"]),...d!=null&&d["c:dLbls"]'],
+  ];
+  for (const [before, after] of replacements) {
+    if (source.split(before).length !== 2) throw new Error('The Flyfish PPTX chart color parser changed; reassess line series.');
+    source = source.replace(before, after);
+  }
+  source = '/* __slowLookLineSeriesColor */\n' + source;
+}
+
+// Preserve the optional background behind Office data labels, e.g. line
+// values drawn over a dark bar in a combination chart.
+if (!source.includes('function __slowLookLabelFill(')) {
+  const labelStart = 'return{...e["c:txPr"]?{font:lf(e["c:txPr"],r,t)}:{},showValue:a("c:showVal")';
+  if (source.split(labelStart).length !== 2) throw new Error('The Flyfish PPTX label parser changed; reassess label fills.');
+  source = 'function __slowLookLabelFill(e,r){const f=e?.["c:spPr"]?.["a:solidFill"],v=f&&r?.(f);return /^(?:[\\da-f]{6}|[\\da-f]{8})$/i.test(String(v))?"#"+v:void 0}\n' +
+    source.replace(labelStart, 'return{backgroundColor:__slowLookLabelFill(e,r),...e["c:txPr"]?{font:lf(e["c:txPr"],r,t)}:{},showValue:a("c:showVal")');
+}
 if (!source.startsWith(notice)) source = notice + source.replace(/^\/\* (?:SlowLook|QuickLook Fast) modified this Flyfish PPTX Worker:[^\n]*\*\/\n/, '');
 fs.writeFileSync(worker, source);
-console.log('Applied Flyfish PPTX text, progressive-style, gradient-stop and arrow repairs.');
+console.log('Applied Flyfish PPTX text, shape, progressive-style and chart metadata repairs.');
