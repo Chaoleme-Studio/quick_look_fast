@@ -153,7 +153,7 @@ pnpm run dist:win
 
 - [使用指南](docs/user-guide.md) · [架构与性能](docs/architecture.md) · [兼容性](docs/compatibility.md)
 - [平台接入](docs/platforms.md) · [需求与验证](docs/requirements-and-verification.md) · [打包发布](docs/releasing.md)
-- [参考项目](docs/references.md) · [第三方组件和许可](THIRD_PARTY.md)
+- [参考项目](docs/references.md) · [固定预览方案（待确认）](docs/pinned-preview-proposal.md) · [第三方组件和许可](THIRD_PARTY.md)
 
 本项目自有代码采用 [Apache-2.0](LICENSE)。第三方组件分别适用各自许可证；Flyfish 的部分 CAD 运行时包含 AGPL/GPL 组件，详情及对应源码位置见[第三方说明](THIRD_PARTY.md)。感谢 Flyfish 团队及所有开源贡献者。
 
