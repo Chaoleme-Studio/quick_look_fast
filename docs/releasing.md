@@ -1,6 +1,6 @@
 # 打包与发布
 
-项目版本为 `1.0.0`。发布包按目标系统构建，打包脚本不会跨平台伪造可运行程序。安装依赖使用 `pnpm install --frozen-lockfile`，构建便携包前需执行 `pnpm run electron:install` 下载 Electron 运行时；发布工作流也显式执行该步骤。
+发布包按目标系统构建，打包脚本不会跨平台伪造可运行程序。安装依赖使用 `pnpm install --frozen-lockfile`，构建便携包前需执行 `pnpm run electron:install` 下载 Electron 运行时；发布工作流也显式执行该步骤。
 
 | 平台 | 架构 / 版本 | 产物与限制 |
 | --- | --- | --- |
@@ -10,9 +10,18 @@
 
 [Release 工作流](../.github/workflows/release.yml)只监听 Release `published`：普通提交、标签推送和未发布草稿不会触发。每个平台按 pnpm 锁文件安装依赖、构建、打包与测试，将归档和 SHA-256 文件附加到 Release。需要仓库允许 Actions 写入 `contents`，不可变的 Release 不能追加文件。
 
+正式版的四个构建作业全部成功后，工作流会核对版本标签及已上传附件的大小、SHA-256，生成并附加 `update.json`。更新检查读取其中的版本和附件信息；没有清单的旧版发布仍可通过正式版本标签识别。清单用于检查版本和列出附件，当前不用于自动下载或安装，也没有单独的签名文件。
+
 0.3.0 的 Windows x64、Linux x64、Linux arm64 和 macOS arm64 作业已在 GitHub Actions 通过并上传归档。macOS 作业使用 `macos-26` arm64 运行器，检查 Bundle 的最低系统版本、临时签名，以及 Electron 的架构和版本；Node 模式检查不能替代图形界面验收。Linux ARM64 包已在 Fedora 45、KDE Wayland、Dolphin 26.08.2 虚拟机测试文本文件的空格预览及冷启动；其他发行版、文件和桌面组合仍需分别验证。
 
 Windows 本地打包使用 `pnpm run dist:win`。结果依次放在 `build/versions/V1`、`V2` 等目录；指定 `node scripts/pack-portable.cjs V13` 可创建未使用的编号。脚本拒绝覆盖已有版本。编号仅标识本机构建，与 `package.json` 中的语义版本不同。Linux 安装、Dolphin 快捷键与 GNOME 服务的步骤见[平台说明](platforms.md#linux)。
+
+macOS 本地打包完成后，对生成的应用进行临时签名并验证；将示例中的 `V1` 替换为打包命令输出的目录：
+
+```sh
+codesign --force --deep --sign - "build/versions/V1/QuickLook Fast.app"
+codesign --verify --deep --strict "build/versions/V1/QuickLook Fast.app"
+```
 
 `src/index.html` 是 Vite 源码入口。前端与 Electron 编译到 `build/dist/` 和 `build/dist-electron/`。Windows 原生程序编译到 `build/native/windows/`。macOS 构建使用 Xcode 的 Swift 工具链，将 Finder 监听程序编译到 `build/native/macos/` 并随应用打包。便携版集中在 `build/versions/`。
 

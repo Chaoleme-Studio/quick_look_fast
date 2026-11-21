@@ -31,6 +31,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
   const canvasCalls = [];
   let selectedFiles = 0, defaultOpens = 0, hiddenPreviews = 0;
   let defaultOpenResult = { ok: true };
+  let updateRequests = 0;
+  let updateResponse = async () => ({ state: 'available', currentVersion: '0.1.2', latestVersion: '0.2.0' });
 
   try {
     window.document.body.innerHTML = '<div id="app"></div>';
@@ -85,7 +87,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       openProjectLink: (destination) => { callbacks.openedLink = destination; },
       appVersion: async () => '0.1.2',
       openDiagnostics: async () => { callbacks.openedDiagnostics = true; return { ok: true }; },
-      checkForUpdates: async () => ({ state: 'available', currentVersion: '0.1.2', latestVersion: '0.2.0' }),
+      checkForUpdates: () => { updateRequests += 1; return updateResponse(); },
       onPinState: (callback) => { callbacks.pinState = callback; },
       getStartup: async () => ({ supported: true, enabled: false }),
       setStartup: async (enabled) => ({ supported: true, enabled }),
@@ -303,14 +305,55 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     assert.deepEqual(navigations, ['ArrowDown'], 'disabled navigation should not forward the key');
     assert.equal(window.localStorage.getItem('slowlook.navigation'), 'false');
     window.document.querySelector('#settings-open').click();
-    window.document.querySelector('[data-settings-tab="about"]').click();
+    assert.equal(updateRequests, 0, 'opening settings outside About does not check for updates');
+    let resolveUpdate;
+    updateResponse = () => new Promise((resolve) => { resolveUpdate = resolve; });
+    const aboutTab = window.document.querySelector('[data-settings-tab="about"]');
+    const updateButton = window.document.querySelector('#check-update');
+    const updateStatus = window.document.querySelector('#update-status');
+    aboutTab.click();
+    assert.equal(updateRequests, 1, 'entering About automatically checks for updates');
+    assert.equal(updateButton.disabled, true, 'the manual check is disabled while a request is running');
+    assert.match(updateStatus.textContent, /正在检查更新/);
+    assert.doesNotMatch(updateStatus.textContent, /github/i, 'the progress message uses product-facing language');
+    aboutTab.click();
+    window.document.querySelector('#tab-general').click();
+    aboutTab.click();
+    window.document.querySelector('#settings-close').click();
+    window.document.querySelector('#settings-open').click();
+    updateButton.click();
+    assert.equal(updateRequests, 1, 'repeated entry and manual clicks share an in-flight request');
+    resolveUpdate({ state: 'available', currentVersion: '0.1.2', latestVersion: '0.2.0' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(updateButton.disabled, false);
+    assert.match(updateStatus.textContent, /0\.2\.0/);
+    aboutTab.click();
+    assert.equal(updateRequests, 1, 'clicking the already active About tab does not recheck');
     assert.match(window.document.querySelector('#group-about').textContent, /www\.chaoleme\.cn/);
     window.document.querySelector('[data-external-link="organization"]').click();
     assert.equal(callbacks.openedLink, 'organization');
     assert.match(window.document.querySelector('#app-version').textContent, /0\.1\.2/);
-    window.document.querySelector('#check-update').click();
+    updateResponse = async () => ({ state: 'error', currentVersion: '0.1.2', message: 'GitHub is unavailable on this platform' });
+    updateButton.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.match(window.document.querySelector('#update-status').textContent, /0\.2\.0/);
+    assert.equal(updateRequests, 2, 'manual checks remain available after an automatic check');
+    assert.equal(updateStatus.textContent, '检查更新失败，请稍后重试。', 'backend error details do not leak into the user-facing message');
+    updateResponse = async () => { throw new Error('network error'); };
+    updateButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(updateStatus.textContent, '检查更新失败，请稍后重试。');
+    assert.equal(updateButton.disabled, false, 'a rejected request can be retried');
+    updateResponse = async () => ({ state: 'up-to-date', currentVersion: '0.1.2', latestVersion: '0.1.2' });
+    updateButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(updateStatus.textContent, /已是最新正式版本/);
+    assert.equal(updateRequests, 4);
+    updateResponse = async () => ({ state: 'available', currentVersion: '0.1.2', latestVersion: '0.2.0' });
+    window.document.querySelector('#settings-close').click();
+    window.document.querySelector('#settings-open').click();
+    assert.equal(updateRequests, 5, 'reopening settings on About starts a new automatic check');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(updateStatus.textContent, /0\.2\.0/);
     window.document.querySelector('[data-external-link="releases"]').click();
     assert.equal(callbacks.openedLink, 'releases');
     window.document.querySelector('#open-diagnostics').click();

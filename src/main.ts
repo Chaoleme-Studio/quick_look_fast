@@ -157,7 +157,7 @@ app.innerHTML = `
           ${settingsGroups.map((group, index) => `<button type="button" role="tab" id="tab-${group.id}" aria-controls="group-${group.id}" aria-selected="${index === 0}" data-settings-tab="${group.id}" tabindex="${index === 0 ? '0' : '-1'}"><span class="settings-tab-dot"></span>${group.label}</button>`).join('')}
         </nav><div class="settings-sidebar-footer"><span class="status-dot"></span>更改自动保存</div></aside>
         <div class="settings-body"><button id="settings-close" class="close-action settings-close" type="button" aria-label="关闭设置">×</button>
-          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card" ${group.id === 'integration' && !isMac ? 'hidden' : ''}>${group.id === 'integration' && isMac ? macFinderSettings : ''}${group.rows.map((row) => `<label class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? `<div class="setting-row about-row"><span><strong>版本与更新</strong><small id="app-version">正在读取当前版本…</small><small id="update-status" role="status" aria-live="polite">点击检查更新时才会访问 GitHub。</small></span><span class="about-actions"><button id="check-update" type="button" class="about-link">检查更新</button><button type="button" class="about-link" data-external-link="releases">手动下载 ↗</button></span></div><div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>` : ''}</div>${group.id === 'integration' ? integrationNote : ''}</section>`).join('')}
+          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card" ${group.id === 'integration' && !isMac ? 'hidden' : ''}>${group.id === 'integration' && isMac ? macFinderSettings : ''}${group.rows.map((row) => `<label class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? `<div class="setting-row about-row"><span><strong>版本与更新</strong><small id="app-version">正在读取当前版本…</small><small id="update-status" role="status" aria-live="polite">进入“关于”时自动检查更新。</small></span><span class="about-actions"><button id="check-update" type="button" class="about-link">检查更新</button><button type="button" class="about-link" data-external-link="releases">手动下载 ↗</button></span></div><div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>` : ''}</div>${group.id === 'integration' ? integrationNote : ''}</section>`).join('')}
         </div>
       </section>
     </div>
@@ -381,16 +381,20 @@ document.querySelectorAll<HTMLButtonElement>('[data-external-link]').forEach((bu
 const updateButton = element<HTMLButtonElement>('#check-update');
 const updateStatus = element('#update-status');
 void window.slowLook.appVersion().then((version) => { element('#app-version').textContent = version ? `当前版本 v${version}` : '无法读取当前版本'; }).catch(() => { element('#app-version').textContent = '无法读取当前版本'; });
-updateButton.addEventListener('click', async () => {
+let updateCheckInFlight = false;
+async function checkForUpdates(): Promise<void> {
+  if (updateCheckInFlight) return;
+  updateCheckInFlight = true;
   updateButton.disabled = true;
-  updateStatus.textContent = '正在检查 GitHub 的正式版本…';
+  updateStatus.textContent = '正在检查更新…';
   try {
     const result = await window.slowLook.checkForUpdates();
     updateStatus.textContent = result.state === 'available' ? `发现新版本 v${result.latestVersion}，可手动下载。`
-      : result.state === 'up-to-date' ? `已是最新正式版本（v${result.latestVersion}）。` : 'message' in result ? result.message : '检查失败，请稍后重试。';
-  } catch { updateStatus.textContent = '检查失败，请稍后重试。'; }
-  finally { updateButton.disabled = false; }
-});
+      : result.state === 'up-to-date' ? `已是最新正式版本（v${result.latestVersion}）。` : '检查更新失败，请稍后重试。';
+  } catch { updateStatus.textContent = '检查更新失败，请稍后重试。'; }
+  finally { updateCheckInFlight = false; updateButton.disabled = false; }
+}
+updateButton.addEventListener('click', () => { void checkForUpdates(); });
 const diagnosticRow = document.createElement('div'); diagnosticRow.className = 'setting-row about-row';
 diagnosticRow.innerHTML = '<span><strong>运行诊断</strong><small id="diagnostics-status">日志保存在本机，不记录预览文件内容。</small></span><button type="button" class="about-link" id="open-diagnostics">打开日志目录 ↗</button>';
 element('#group-about .settings-card').append(diagnosticRow);
@@ -1424,18 +1428,22 @@ infoButton.addEventListener('click', () => {
 });
 element('#file-info-close').addEventListener('click', () => { hideFileInfo(); infoButton.focus(); });
 element('#settings-open').addEventListener('click', () => {
+  const opening = settingsPanel.hidden;
   settingsPanel.hidden = false;
   element('[role="tab"][aria-selected="true"]').focus();
   void refreshStartup();
+  if (opening && !element('#group-about').hidden) void checkForUpdates();
 });
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')) {
   button.addEventListener('click', () => {
+    const enteringAbout = button.dataset.settingsTab === 'about' && button.getAttribute('aria-selected') !== 'true';
     for (const tab of document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')) {
       const selected = tab === button;
       tab.setAttribute('aria-selected', String(selected));
       tab.tabIndex = selected ? 0 : -1;
     }
     for (const group of document.querySelectorAll<HTMLElement>('[data-settings-group]')) group.hidden = group.dataset.settingsGroup !== button.dataset.settingsTab;
+    if (enteringAbout && !settingsPanel.hidden) void checkForUpdates();
   });
   button.addEventListener('keydown', (event) => {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;

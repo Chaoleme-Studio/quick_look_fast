@@ -125,6 +125,31 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: gh release upload "$RELEASE_TAG" "build/$ARCHIVE" "build/$ARCHIVE.sha256" --clobber
 
+  update-manifest:
+    name: Create update manifest
+    needs: [windows, linux, macos]
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Collect uploaded package metadata and attach update.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node -e 'if (`v${require("./package.json").version}` !== process.env.RELEASE_TAG) throw new Error("Package version does not match the release tag")'
+          gh api "repos/$GH_REPO/releases/$RELEASE_ID" > release.json
+          node scripts/create-update-manifest.cjs release.json update.json "$GH_REPO" "$RELEASE_TAG"
+          gh release upload "$RELEASE_TAG" update.json --clobber
+
   macos:
     name: macOS arm64 portable
     runs-on: macos-26

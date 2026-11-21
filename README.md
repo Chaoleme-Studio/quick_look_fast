@@ -2,9 +2,9 @@
 
 ![QuickLook Fast 图标](public/branding/app.png)
 
-QuickLook Fast 是离线优先的跨平台文件预览工具。完成系统接入后，选中文件或文件夹，按空格查看内容，再按一次收起；也可以从窗口选择文件或直接拖放。项目原名 SlowLook，使用 Electron、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 构建，支持 Windows、macOS 和 Linux。
+QuickLook Fast 是离线优先的跨平台文件预览工具。完成系统接入后，选中文件或文件夹，按空格查看内容，再按一次收起；也可以从窗口选择文件或直接拖放。项目使用 Electron、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 构建，支持 Windows、macOS 和 Linux。
 
-当前版本为 **1.0.0**。不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
+不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
 
 ## 功能亮点
 
@@ -13,7 +13,7 @@ QuickLook Fast 是离线优先的跨平台文件预览工具。完成系统接�
 - **文档与表格**：查看 Word、Excel、PPT、PDF 等内容；Word 和 PPTX 支持预览翻页，Word 还可按标题导航。复杂字体、图表、动画或排版可能与原程序不同。
 - **图片、媒体和更多格式**：支持图片缩放、旋转和信息查看，音视频播放，以及代码、Markdown、3D、CAD、设计文件等内容或结构预览。[完整格式和边界](docs/formats.md)。
 - **按自己的习惯使用**：固定预览窗口、调整文本行号和换行、切换文档导航与页码、控制缩略图及自动播放。macOS 可分别控制 Dock、菜单栏图标与 Finder 快捷键。
-- **本地优先**：预览在本机进行；手动检查更新时才连接 GitHub，不上传预览文件。
+- **本地优先**：预览在本机进行；打开“设置 → 关于”时会联网检查更新，不上传预览文件。
 
 ## 目录
 
@@ -97,7 +97,7 @@ CAD 图纸可尝试查看轮廓与部分内容；本次测试的 DWG/DXF 中，�
 | macOS | macOS 26 及以上，Apple Silicon / arm64 | `QuickLook Fast.app` | Finder 支持可选的 Space 接管或组合键。应用仅临时签名，未进行 Apple 公证。 |
 | Linux | x64 / arm64，GNOME / KDE Plasma 等 | `./quicklook-fast` | 使用 GNOME 预览服务或 Dolphin/Nemo 菜单，需满足 Electron 系统依赖。 |
 
-本地开发构建位于 `build/versions/V1/`、`V2/` 等逐个编号的目录中，编号是**本地构建迭代号**，与软件版本 `1.0.0` 分开。新构建不会覆盖已有编号。
+本地开发构建位于 `build/versions/V1/`、`V2/` 等逐个编号的目录中，编号是**本地构建迭代号**，与软件版本号分开。新构建不会覆盖已有编号。
 
 ## 基本操作
 
@@ -110,7 +110,7 @@ CAD 图纸可尝试查看轮廓与部分内容；本次测试的 DWG/DXF 中，�
 
 Word OpenXML 和 PPTX 预览的标题栏右侧可查看当前页及总页数，点击左右按钮翻页，或输入页码后按 Enter 跳转；滚动时页码会自动更新。可在“设置 → 阅读与文本”关闭页码控件。Word 左侧文档导航按文档的标题样式列出章节，可点击跳转，也可用顶部目录图标收起或展开；未设置标题样式时不会生成目录。Word 页数由当前预览排版计算，可能与 Microsoft Word 不同。PDF 使用其自带的分页工具栏。
 
-也可以从窗口选择文件、拖放文件，或向程序传入完整路径。在“设置 → 关于”可手动检查 Release 更新；下载和替换需要自行完成。
+也可以从窗口选择文件、拖放文件，或向程序传入完整路径。进入“设置 → 关于”时会自动检查更新，也可以手动重新检查；下载和替换需要自行完成。
 
 ## 预览能力与限制
 
@@ -155,15 +155,15 @@ Word OpenXML 和 PPTX 预览的标题栏右侧可查看当前页及总页数，�
 
 Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前 266 个扩展名进入内容或结构预览链路，另有 `.m4v`、`.mov`、`.ogv` 浏览器播放入口。`.bin`、`.elf`、`.exe`、`.dll`、`.class`、`.macho` 优先检查文件头并回退为文本或文件信息；`.bpmn`、`.dcm`、`.dicom` 未接入专用渲染器。详细说明见[格式清单](docs/formats.md)和[兼容性说明](docs/compatibility.md)。
 
-预览默认在本机进行。HTML 使用隔离框架，HTTP(S)/WebSocket 外联受到限制；这不等于完整的安全隔离。手动检查更新时会连接 GitHub，不上传预览文件。
+预览默认在本机进行。HTML 使用隔离框架，HTTP(S)/WebSocket 外联受到限制；这不等于完整的安全隔离。打开“设置 → 关于”或手动检查更新时会联网查询版本，不上传预览文件。
 
 ## 平台与文件管理器
 
 - **Windows**：Explorer、桌面和 Directory Opus 支持已实现的 Space 入口。与 QuickLook、PowerToys Peek 或 DOpus 自带快捷键同时运行时可能冲突。
 - **macOS**：在“设置 → 系统集成”可选择 Finder 使用系统快速查看、`⌘⇧Space` 或由 QuickLook Fast 接管 `Space`。接管需要辅助功能权限。Dock 与菜单栏图标可分别隐藏。
-- **Linux**：解压到固定位置后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上还需要单独配置 Space，并处理其原有的选择模式快捷键。1.0.0 提供可选的实验性 Plasma 桌面接入，运行安装脚本时使用 `--plasma-desktop`；0.3.0 发布包不包含该组件。[详细安装、设置和还原步骤](docs/platforms.md#linux)。
+- **Linux**：解压到固定位置后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上还需要单独配置 Space，并处理其原有的选择模式快捷键。可选的实验性 Plasma 桌面接入使用 `--plasma-desktop` 参数安装。[详细安装、设置和还原步骤](docs/platforms.md#linux)。
 
-切换自旧 QuickLook 或 SlowLook 时，先退出旧程序并关闭其开机启动。旧设置和插件不会自动迁移。系统权限、Wayland/X11、Finder 和 DOpus 双栏等细节见[平台说明](docs/platforms.md)。
+切换自其他预览工具时，先退出旧程序并关闭其开机启动。其他工具的设置和插件不会自动迁移。系统权限、Wayland/X11、Finder 和 DOpus 双栏等细节见[平台说明](docs/platforms.md)。
 
 ## 技术方案
 
@@ -207,10 +207,10 @@ pnpm install --frozen-lockfile
 pnpm run electron:install
 pnpm run build
 pnpm test
-pnpm run dev
+node scripts/pack-portable.cjs
 ```
 
-Windows 本地生成便携版：
+打包命令须在目标系统执行；macOS 构建后还需按[打包发布](docs/releasing.md)说明签名。开发调试可运行 `pnpm run dev`。Windows 也可以一步完成构建与打包：
 
 ```sh
 pnpm run dist:win
