@@ -12,7 +12,10 @@ QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，�
 - [下载与运行](#下载与运行)
 - [基本操作](#基本操作)
 - [预览能力与限制](#预览能力与限制)
+- [完整格式清单](docs/formats.md)
 - [平台与文件管理器](#平台与文件管理器)
+- [技术方案](#技术方案)
+- [兼容性补丁](#兼容性补丁)
 - [开发与构建](#开发与构建)
 - [项目目录](#项目目录)
 - [故障排查](#故障排查)
@@ -67,19 +70,52 @@ QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，�
 
 顶部“使用默认应用打开”会用系统关联的应用打开当前文件，旁边的文件夹图标可选择其他文件进行预览。图片放大到超出窗口后，可按住鼠标左键拖动查看。
 
+Word OpenXML 和 PPTX 预览底部可查看当前页及总页数，点击左右按钮翻页，或输入页码后按 Enter 跳转；滚动时页码会自动更新。Word 页数由当前预览排版计算，可能与 Microsoft Word 不同。PDF 使用其自带的分页工具栏。
+
 也可以从窗口选择文件、拖放文件，或向程序传入完整路径。在“设置 → 关于”可手动检查 Release 更新；下载和替换需要自行完成。
 
 ## 预览能力与限制
 
-| 类型 | 支持情况 | 主要边界 |
-| --- | --- | --- |
-| 文档 | PDF、DOCX、XLSX、PPTX、OFD 等使用 Flyfish；支持常见密码加密的 OOXML。 | 复杂排版可能不同于原软件；加密 Office 输入与输出各限 64 MiB。 |
-| 图片和媒体 | 图片预览显示宽高，信息按钮读取照片 EXIF。支持图片缩放、音视频播放和可拖动的音频波形。 | 尺寸取决于解码或文件头，EXIF 取决于原图是否保留拍摄参数。较长或较大的音频显示示意波形。 |
-| 代码与文本 | 代码着色、行号、Markdown 目录和文档目录内的相对图片；字幕可按文本查看。 | 超过 16 MiB 的常见文本默认只读取开头 1 MiB；本地图片限常见栅格格式、每张 12 MiB。 |
-| 文件夹和压缩包 | 文件夹分页和下钻，ZIP/RAR 按需读取目录及所选内容，支持常见密码。 | 文件夹总大小不递归统计；压缩包单条目压缩与解压后各限 64 MiB。 |
-| HTML、工程和其他格式 | 本地 HTML 可切换脚本；CAD、3D、设计、邮件及数据文件由对应渲染器尝试打开。 | HTML 脚本默认开启，可在设置中关闭；复杂格式、网络资源与受保护内容不保证完整显示。 |
+下表列出当前接入的文件扩展名。部分专业格式提供结构、元数据或内嵌预览，实际效果受文件内容、字体和编码影响；表中登记不代表逐一实测通过。
 
-Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前约 266 个扩展名进入内容渲染候选。这是代码路由统计，不是逐一实测通过的数量。详细能力、大小限制和验证状态见[兼容性说明](docs/compatibility.md)及[使用指南](docs/user-guide.md)。
+<!-- formats:content:start -->
+
+| 分类 | 文件类型 | 扩展名 | 预览方式与边界 |
+| --- | --- | --- | --- |
+| 文档 | Word OpenXML | `.docx` `.docm` `.dotx` `.dotm` | 文档内容与分页预览；复杂排版可能与 Word 不同。 |
+| 文档 | 旧版 Word | `.doc` `.dot` | 结构化预览；旧格式的复杂布局支持有限。 |
+| 文档 | PowerPoint OpenXML | `.pptx` `.pptm` `.potx` `.potm` `.ppsx` `.ppsm` | 幻灯片预览；动画、字体和复杂图表可能不同。 |
+| 文档 | 旧版 PowerPoint | `.ppt` `.pot` | 结构化预览；不等同于新版 PPTX 渲染。 |
+| 文档 | 开放文档与富文本 | `.rtf` `.odt` `.odp` | 结构化预览，复杂样式可能简化。 |
+| 文档 | 其他文字处理 | `.wpd` `.wp` `.wp5` `.wp6` `.hwp` `.hwpx` | 结构化预览，复杂页面和嵌入对象可能简化。 |
+| 表格 | 工作簿与数据表 | `.xlsx` `.xltx` `.xlsm` `.xlsb` `.xls` `.xlt` `.xla` `.xlam` `.xltm` `.csv` `.tsv` `.ods` `.fods` `.dbf` | 工作表或表格预览；公式、宏和复杂样式不保证完整。 |
+| 文档 | PDF、OFD 与排版 | `.pdf` `.ofd` `.typ` `.typst` | PDF 使用分页预览；其他格式的还原效果取决于内容。 |
+| 文档 | Apple iWork | `.pages` `.numbers` `.key` | 依赖文件内部可用的页面或结构；不同版本可能有差异。 |
+| 电子书 | 电子书和帮助文档 | `.epub` `.fb2` `.umd` `.chm` | 阅读或结构预览；受保护内容及部分交互可能不支持。 |
+| 图片 | 常见图片 | `.gif` `.jpg` `.jpeg` `.bmp` `.tiff` `.tif` `.png` `.svg` `.webp` `.avif` `.ico` `.heic` `.heif` `.jxl` | 显示图像；解码、动画与多帧支持取决于格式。 |
+| 音频 | 音乐和音频 | `.mp3` `.mpeg` `.wav` `.ogg` `.oga` `.opus` `.m4a` `.aac` `.flac` `.weba` `.midi` `.mid` | 播放与音频预览；编码和波形效果依赖实际文件。 |
+| 视频 | 视频和流媒体 | `.mp4` `.webm` `.m3u8` `.m4v` `.mov` `.ogv` | 播放入口；编码或受限的外部流地址可能无法播放。 |
+| 三维 | 网格与场景 | `.glb` `.gltf` `.obj` `.stl` `.ply` `.fbx` `.dae` `.3ds` `.3mf` `.amf` `.usd` `.usda` `.usdc` `.usdz` `.kmz` | 三维模型预览；外部材质、纹理及动画支持因文件而异。 |
+| 三维 | 工程模型与点云 | `.step` `.stp` `.iges` `.igs` `.ifc` `.3dm` `.brep` `.pcd` `.wrl` `.vrml` `.xyz` `.vtk` `.vtp` | 结构化或三维预览；复杂模型可能耗时或不完整。 |
+| 工程 | CAD 与固定版式 | `.dxf` `.dwg` `.dwf` `.dwfx` `.xps` | CAD 图纸或固定版式预览；版本及图层支持因文件而异。 |
+| 工程 | 电子设计 | `.olb` `.dra` `.gds` `.oas` `.oasis` | 图形或结构预览；不保证全部工程语义。 |
+| 地图 | 地理数据 | `.geojson` `.kml` `.gpx` `.shp` | 地理数据预览；地图底图或关联文件可能不可用。 |
+| 图表 | 流程图与思维导图 | `.excalidraw` `.drawio` `.dio` `.mermaid` `.mmd` `.plantuml` `.puml` `.xmind` | 图形或结构预览；外部资源和扩展语法可能受限。 |
+| 设计 | Photoshop / Illustrator | `.psd` `.psb` `.pdd` `.psdt` `.ai` `.ait` `.eps` `.ps` | 图像、画板或结构预览；效果、图层和字体可能不完整。 |
+| 设计 | Adobe 设计文档 | `.idml` `.icml` `.idms` `.inx` `.fla` `.xfl` `.xd` `.indd` `.indt` | 页面、内嵌预览或结构信息；部分格式不能完整还原。 |
+| 设计 | 色板和资源 | `.ase` `.aco` `.abr` `.csh` `.pat` `.grd` `.asl` | 色板或资源结构预览。 |
+| 字体和数据 | 字体与数据资产 | `.ttf` `.otf` `.woff` `.woff2` `.sqlite` `.wasm` `.parquet` `.avro` `.webarchive` `.hex` | 字体、结构或数据检查；不执行文件中的程序。 |
+| 代码和文本 | 文本及配置 | `.txt` `.lrc` `.json` `.jsonc` `.json5` `.xml` `.yaml` `.yml` `.ini` `.toml` `.log` `.http` | 文本、高亮或结构预览；大文本可能只读取片段。 |
+| 代码和文本 | Web 与脚本 | `.js` `.mjs` `.cjs` `.css` `.html` `.htm` `.jsx` `.ts` `.tsx` `.vue` `.react` `.sh` `.bash` `.php` `.py` `.rb` | 代码高亮；HTML 使用隔离预览，外部资源可能受限。 |
+| 代码和文本 | 编程与标记 | `.java` `.sql` `.go` `.rs` `.c` `.cpp` `.cc` `.h` `.hpp` `.cs` `.diff` `.patch` `.bundle` `.bdl` `.ipynb` `.proto` `.hcl` `.tex` `.gv` `.swift` `.kt` `.md` `.markdown` | 文本、代码或 Markdown 预览；不执行代码。 |
+| 压缩包 | ZIP / RAR 与其他归档 | `.zip` `.zipx` `.7z` `.rar` `.tar` `.gz` `.gzip` `.tgz` `.bz2` `.bzip2` `.tbz` `.tbz2` `.xz` `.txz` `.lzma` `.zst` `.tzst` `.cab` `.ar` `.cpio` `.iso` `.xar` `.lha` `.lzh` | 目录或条目预览；压缩方式、分卷和密码支持存在差异。 |
+| 压缩包 | 软件包与漫画包 | `.jar` `.war` `.ear` `.apk` `.cbz` `.cbr` | 按归档结构查看，不安装或运行程序。 |
+| 邮件 | 邮件和邮箱 | `.eml` `.msg` `.mbox` | 邮件内容与结构预览，外部资源可能受限。 |
+| 安全 | 签名和加密容器 | `.p7m` `.p7s` `.p7c` `.p7b` `.pkcs7` `.cms` `.cmsc` `.tsd` `.tst` `.tsq` `.tsr` `.asics` `.scs` `.asice` `.sce` `.ers` `.asc` `.sig` `.pgp` `.gpg` `.jws` | 检查签名或容器结构；不代表能解密或验证所有证书链。 |
+
+<!-- formats:content:end -->
+
+Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前 266 个扩展名进入内容或结构预览链路，另有 `.m4v`、`.mov`、`.ogv` 浏览器播放入口。`.bin`、`.elf`、`.exe`、`.dll`、`.class`、`.macho` 优先检查文件头并回退为文本或文件信息；`.bpmn`、`.dcm`、`.dicom` 未接入专用渲染器。详细说明见[格式清单](docs/formats.md)和[兼容性说明](docs/compatibility.md)。
 
 预览默认在本机进行。HTML 使用隔离框架，HTTP(S)/WebSocket 外联受到限制；这不等于完整的安全隔离。手动检查更新时会连接 GitHub，不上传预览文件。
 
@@ -90,6 +126,39 @@ Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前约 266 个扩�
 - **Linux**：解压后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上可尝试为服务菜单设置 Space。
 
 切换自旧 QuickLook 或 SlowLook 时，先退出旧程序并关闭其开机启动。旧设置和插件不会自动迁移。系统权限、Wayland/X11、Finder 和 DOpus 双栏等细节见[平台说明](docs/platforms.md)。
+
+## 技术方案
+
+```mermaid
+flowchart LR
+  A[文件管理器或选择文件] --> B[Windows / macOS / Linux 平台接入]
+  B --> C[Electron 主进程与预览窗口]
+  C --> D[本地文件服务与目录会话]
+  D --> E[Chromium / Flyfish 渲染器]
+  E --> F[文档、图片、媒体与文件信息]
+```
+
+| 部分 | 实现 |
+| --- | --- |
+| 桌面与界面 | Electron、TypeScript、Vite；预览窗口和系统托盘由主进程管理。 |
+| 平台入口 | Windows 使用 C# 桥接 Explorer / Directory Opus；macOS 使用 Finder 适配；Linux 使用 GNOME D-Bus 或 Dolphin/Nemo 菜单。 |
+| 文件读取 | 本地令牌 URL 支持范围请求；ZIP 按目录和条目读取，RAR 与 Office 解密使用 Worker。其他格式仍可能完整读取。 |
+| 预览渲染 | 常见图片和音视频由 Chromium 处理；Office、PDF、工程、设计等由 Flyfish 3.3.4 的对应渲染器处理。 |
+| 文档翻页 | PPTX 按幻灯片序号定位；Word OpenXML 按当前预览排版分页。PDF 使用 Flyfish 自带的分页控件。 |
+| 隔离和回退 | HTML 在隔离框架中打开；未知文件先检查内容，无法渲染时显示文件信息。具体边界见[架构与性能](docs/architecture.md)。 |
+
+## 兼容性补丁
+
+补丁只针对锁定的 Flyfish 3.3.4 构建产物应用；升级依赖时必须重新核对匹配条件并运行测试。
+
+| 补丁 | 用途 |
+| --- | --- |
+| [PPTX Worker](patch/patch-flyfish-pptx.cjs) | 修正组合文字、形状、渐变、箭头和图表元数据，并逐步发送页面样式。 |
+| [PPTX 图表](patch/flyfish-pptx-chart-fix.cjs) | 调整坐标轴、刻度、图表标签和数据标签位置。 |
+| [DOCX Worker](patch/patch-flyfish-docx.cjs) | 允许打包后的本地应用协议加载随程序提供的 JSZip 资源。 |
+| [XLSX Worker](patch/patch-flyfish-xlsx.cjs) 与 [行高处理](patch/flyfish-xlsx-row-fix.cjs) | 修正自动行高、合并单元格及 Worker 行高计算。 |
+
+补丁原理、已验证页面和仍有限制的场景见[兼容性说明](docs/compatibility.md)，第三方组件及许可见[第三方说明](THIRD_PARTY.md)。
 
 ## 开发与构建
 
@@ -151,10 +220,12 @@ pnpm run dist:win
 
 ## 文档与许可证
 
-- [使用指南](docs/user-guide.md) · [架构与性能](docs/architecture.md) · [兼容性](docs/compatibility.md)
+- [使用指南](docs/user-guide.md) · [完整格式清单](docs/formats.md) · [架构与性能](docs/architecture.md) · [兼容性](docs/compatibility.md)
 - [平台接入](docs/platforms.md) · [需求与验证](docs/requirements-and-verification.md) · [打包发布](docs/releasing.md)
 - [参考项目](docs/references.md) · [固定预览方案（待确认）](docs/pinned-preview-proposal.md) · [第三方组件和许可](THIRD_PARTY.md)
 
 本项目自有代码采用 [Apache-2.0](LICENSE)。第三方组件分别适用各自许可证；Flyfish 的部分 CAD 运行时包含 AGPL/GPL 组件，详情及对应源码位置见[第三方说明](THIRD_PARTY.md)。感谢 Flyfish 团队及所有开源贡献者。
 
-组织：[Chaoleme Studio](https://www.chaoleme.cn/) · 社区：[Linux DO](https://linux.do/)
+组织：[Chaoleme Studio](https://www.chaoleme.cn/)
+
+社区：[Linux&nbsp;DO](https://linux.do/)

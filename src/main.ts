@@ -12,6 +12,7 @@ import { requestPassword } from './ui/password-prompt';
 import { fileInfoDetails, formatSize, showPhotoExif, type PreviewFile } from './ui/file-info';
 import { mountAudioWaveform } from './preview/media/audio-waveform';
 import { mountHtmlPreview, type HtmlPreview, type HtmlPreviewSource } from './preview/web/html-preview';
+import { mountPageNavigation } from './preview/document/page-navigation';
 import type { ViewerController, ViewerOptions, ViewerState } from '@file-viewer/web-full';
 import type { RendererDefinition } from '@file-viewer/core';
 
@@ -173,6 +174,7 @@ let controller: ViewerController | undefined;
 const nestedControllers = new Set<ViewerController>();
 const htmlPreviews = new Set<HtmlPreview>();
 let removeMainImageWheel: (() => void) | undefined;
+let disposeMainPageNavigation: (() => void) | undefined;
 let media: HTMLMediaElement | undefined;
 let disposeMediaVisual: (() => void) | undefined;
 let textRead: AbortController | undefined;
@@ -334,6 +336,8 @@ function clearLargeText(): void {
 }
 
 function disposePreviewViews(): void {
+  disposeMainPageNavigation?.();
+  disposeMainPageNavigation = undefined;
   imageRead?.abort();
   imageRead = undefined;
   stopWatchingImage?.();
@@ -566,6 +570,8 @@ async function loadModules(filename: string): Promise<{ viewer: typeof import('@
 }
 
 function showMetadataFallback(file: PreviewFile, reason: string, sample?: Uint8Array): void {
+  disposeMainPageNavigation?.();
+  disposeMainPageNavigation = undefined;
   stopTextRead();
   clearLargeText();
   stopMedia();
@@ -676,7 +682,7 @@ function viewerOptions(renderers: ViewerOptions['renderers']): ViewerOptions {
     image: { handTool: true },
     // The library ships a dedicated ZIP/XML worker; its default is disabled
     // unless explicitly configured. Keep page DOM layout on the UI thread.
-    docx: { worker: true, renderYieldEveryMs: 8 },
+    docx: { worker: true, renderYieldEveryMs: 8, visualPagination: true },
     pdf: { streaming: true, disableStream: true, disableAutoFetch: true },
     text: textOptions(),
     toolbar: { position: 'bottom-right', download: false, print: false, exportHtml: false },
@@ -747,11 +753,13 @@ async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, sig
     ? installImageWheelZoom(target, () => nested) : () => undefined;
   let disposed = false;
   let stopImageSize: (() => void) | undefined;
-  const dispose = (): void => { if (!disposed) { disposed = true; stopImageSize?.(); nestedControllers.delete(nested); removeWheel(); nested.destroy(); } };
+  let stopPages: (() => void) | undefined;
+  const dispose = (): void => { if (!disposed) { disposed = true; stopPages?.(); stopImageSize?.(); nestedControllers.delete(nested); removeWheel(); nested.destroy(); } };
   signal.addEventListener('abort', dispose, { once: true });
   try {
     await nested.load({ file: new File([blob], name), filename: name, size: blob.size });
     if (signal.aborted) { dispose(); return undefined; }
+    stopPages = mountPageNavigation(target, mount, name);
     if (isImageFile(name)) stopImageSize = showNestedImageDimensions(target, mount, { name, size: blob.size, blob }, signal);
     return () => { signal.removeEventListener('abort', dispose); dispose(); };
   } catch (error) {
@@ -933,12 +941,16 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
   clarifySearchCount(mount);
   const removeWheel = /\.(?:png|jpe?g|gif|webp|bmp|avif|tiff?|heic|heif|psd|svg|ico)$/i.test(filename) ? installImageWheelZoom(target, () => nested) : () => undefined;
   let stopImageSize: (() => void) | undefined;
-  const cleanup = disposeOnAbort(() => { stopImageSize?.(); nestedControllers.delete(nested); removeWheel(); nested.destroy(); });
+  let stopPages: (() => void) | undefined;
+  const cleanup = disposeOnAbort(() => { stopPages?.(); stopImageSize?.(); nestedControllers.delete(nested); removeWheel(); nested.destroy(); });
   try {
     await nested.load({ url: file.url, filename, size: file.size });
     if (signal.aborted) cleanup();
-    else if (/\.(?:md|markdown)$/i.test(filename)) loadMarkdownImages(mount, file.url, () => !signal.aborted);
-    else if (isImageFile(filename)) stopImageSize = showNestedImageDimensions(target, mount, file, signal);
+    else {
+      stopPages = mountPageNavigation(target, mount, filename);
+      if (/\.(?:md|markdown)$/i.test(filename)) loadMarkdownImages(mount, file.url, () => !signal.aborted);
+      else if (isImageFile(filename)) stopImageSize = showNestedImageDimensions(target, mount, file, signal);
+    }
     return cleanup;
   }
   catch (error) { cleanup(); throw error; }
@@ -1094,6 +1106,11 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
     }
     await controller.load({ url: file.url, filename: viewerFilename, size: file.size });
     if (current === generation) {
+      const pageMount = viewerHost.querySelector<HTMLElement>('.viewer-root');
+      if (pageMount) {
+        disposeMainPageNavigation?.();
+        disposeMainPageNavigation = mountPageNavigation(viewerHost, pageMount, viewerFilename);
+      }
       if (isImageFile(viewerFilename) && !/\.svg$/i.test(viewerFilename)) {
         const mount = viewerHost.querySelector<HTMLElement>('.viewer-root');
         if (mount) {
