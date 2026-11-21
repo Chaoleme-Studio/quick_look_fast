@@ -1,4 +1,5 @@
 import { createSidebarToggle } from '../../ui/sidebar-toggle.ts';
+import { isMacMetadataEntry } from '../mac-metadata.ts';
 
 export interface FolderEntry {
   name: string;
@@ -8,9 +9,9 @@ export interface FolderEntry {
 export interface FolderPage { entries: FolderEntry[]; nextOffset: number | null; truncated: boolean }
 export interface FolderPreview { name: string; path: string; id: string; shortcutPath?: string; modifiedAt?: string }
 export interface FolderFile { url: string; name: string; size: number; modifiedAt?: string; createdAt?: string }
-export interface FolderOptions { thumbnails: boolean; inlinePreview: boolean }
+export interface FolderOptions { thumbnails: boolean; inlinePreview: boolean; hideMacMetadata?: boolean }
 export interface FolderView { dispose(): void; setOptions(options: FolderOptions): void }
-interface FolderNode { id: string; list: HTMLUListElement; footer: HTMLElement; next: number | null; loaded: boolean; loading: boolean }
+interface FolderNode { id: string; list: HTMLUListElement; footer: HTMLElement; next: number | null; loaded: boolean; loading: boolean; truncated: boolean; entries: Array<{ item: HTMLLIElement; entry: FolderEntry }> }
 
 const imageExtension = /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i;
 function fileKind(name: string): { label: string; kind: string } {
@@ -41,7 +42,7 @@ export function mountFolderPreview(
   },
   initial: FolderOptions,
 ): FolderView {
-  let disposed = false, total = 0, folders = 0, files = 0;
+  let disposed = false;
   let options = initial;
   let operation: AbortController | undefined;
   let cleanupEntry: (() => void) | undefined;
@@ -70,6 +71,7 @@ export function mountFolderPreview(
   body.append(placeholder); detail.append(detailHeader, body); root.append(tree, detail); target.replaceChildren(root);
 
   const candidates = new Map<HTMLElement, { entry: FolderEntry; image: HTMLImageElement; glyph: HTMLElement }>();
+  const nodes = new Set<FolderNode>();
   const queue: HTMLElement[] = [];
   const queued = new Set<HTMLElement>();
   const visible = new Set<HTMLElement>();
@@ -174,9 +176,11 @@ export function mountFolderPreview(
     try {
       const page = await read(node.id, node.next ?? 0);
       if (disposed) return;
-      node.loaded = true; node.next = page.nextOffset;
+      node.loaded = true; node.next = page.nextOffset; node.truncated = page.truncated;
       for (const entry of page.entries) {
         const item = document.createElement('li'); item.className = `folder-item folder-${entry.kind}`;
+        item.hidden = Boolean(options.hideMacMetadata && (entry.kind === 'file' || entry.kind === 'directory') && isMacMetadataEntry(entry.name, entry.kind === 'directory'));
+        node.entries.push({ item, entry });
         if (entry.kind === 'directory' && entry.id) {
           const button = document.createElement('button'); button.type = 'button'; button.className = 'folder-row folder-expand'; button.setAttribute('aria-expanded', 'false');
           const arrow = document.createElement('span'); arrow.className = 'folder-chevron'; arrow.setAttribute('aria-hidden', 'true'); arrow.textContent = '›';
@@ -186,7 +190,8 @@ export function mountFolderPreview(
           const children = document.createElement('div'); children.className = 'folder-children'; children.hidden = true;
           const childList = document.createElement('ul'); childList.className = 'folder-list';
           const childFooter = document.createElement('div'); childFooter.className = 'folder-footer'; children.append(childList, childFooter);
-          const child: FolderNode = { id: entry.id, list: childList, footer: childFooter, next: 0, loaded: false, loading: false };
+          const child: FolderNode = { id: entry.id, list: childList, footer: childFooter, next: 0, loaded: false, loading: false, truncated: false, entries: [] };
+          nodes.add(child);
           button.addEventListener('click', () => {
             const expanding = children.hidden; children.hidden = !expanding; button.setAttribute('aria-expanded', String(expanding));
             if (expanding && !child.loaded) void load(child, false);
@@ -208,25 +213,32 @@ export function mountFolderPreview(
           item.append(row);
         }
         node.list.append(item);
-        if (isRoot) { total += 1; if (entry.kind === 'directory') folders += 1; else if (entry.kind === 'file') files += 1; }
       }
-      if (isRoot) summary.textContent = `已读取 ${total} 项 · ${folders} 个文件夹 · ${files} 个文件${page.nextOffset !== null || page.truncated ? '（部分内容）' : ''} · 未计算大小`;
-      node.footer.replaceChildren();
-      if (!node.list.children.length) node.footer.textContent = '此文件夹为空';
-      else if (page.truncated) node.footer.textContent = '已显示前 2000 项';
-      else if (page.nextOffset !== null) {
-        const more = document.createElement('button'); more.type = 'button'; more.className = 'folder-more'; more.textContent = '加载更多';
-        more.addEventListener('click', () => { void load(node, isRoot); }); node.footer.append(more);
-      }
+      updateNode(node, isRoot);
     } catch (error) {
       if (disposed) return;
       node.footer.textContent = error instanceof Error ? `无法读取：${error.message}` : '无法读取文件夹';
       if (isRoot) summary.textContent = '未能读取文件夹内容';
     } finally { node.loading = false; if (isRoot && !disposed) onReady(); }
   };
+  function updateNode(node: FolderNode, isRoot: boolean): void {
+    const visible = node.entries.filter(({ item }) => !item.hidden);
+    if (isRoot) {
+      const folders = visible.filter(({ entry }) => entry.kind === 'directory').length;
+      const files = visible.filter(({ entry }) => entry.kind === 'file').length;
+      summary.textContent = `已读取 ${visible.length} 项 · ${folders} 个文件夹 · ${files} 个文件${node.next !== null || node.truncated ? '（部分内容）' : ''} · 未计算大小`;
+    }
+    node.footer.replaceChildren();
+    if (node.truncated) node.footer.textContent = '已读取前 2000 项';
+    else if (node.next !== null) {
+      const more = document.createElement('button'); more.type = 'button'; more.className = 'folder-more'; more.textContent = '加载更多';
+      more.addEventListener('click', () => { void load(node, isRoot); }); node.footer.append(more);
+    } else if (!visible.length) node.footer.textContent = node.entries.length ? '没有可显示的项目' : '此文件夹为空';
+  }
   function setOptions(next: FolderOptions): void {
     const wasInline = options.inlinePreview;
     const hadThumbnails = options.thumbnails;
+    const wasHidingMetadata = Boolean(options.hideMacMetadata);
     options = next;
     root.classList.toggle('has-file-preview', options.inlinePreview);
     detail.hidden = !options.inlinePreview;
@@ -237,8 +249,21 @@ export function mountFolderPreview(
       observer?.disconnect(); queue.length = 0; queued.clear(); visible.clear(); loaded.clear(); for (const cancel of [...active.values()]) cancel();
       for (const { image, glyph } of candidates.values()) { image.removeAttribute('src'); image.hidden = true; glyph.hidden = false; }
     } else if (!hadThumbnails && options.thumbnails) for (const element of candidates.keys()) observer?.observe(element);
+    if (wasHidingMetadata !== Boolean(options.hideMacMetadata)) {
+      for (const node of nodes) {
+        for (const { item, entry } of node.entries) item.hidden = Boolean(options.hideMacMetadata && (entry.kind === 'file' || entry.kind === 'directory') && isMacMetadataEntry(entry.name, entry.kind === 'directory'));
+        if (node.loaded) updateNode(node, node === rootNode);
+      }
+      const selectedRow = tree.querySelector<HTMLElement>('[aria-current="true"]');
+      if (selectedRow?.closest('.folder-item[hidden]')) {
+        selectedRow.removeAttribute('aria-current'); selected = undefined; clearSelection();
+        detailTitle.textContent = '文件预览'; body.replaceChildren(placeholder);
+      }
+    }
   }
   root.classList.toggle('has-file-preview', options.inlinePreview); detail.hidden = !options.inlinePreview;
-  void load({ id: folder.id, list, footer, next: 0, loaded: false, loading: false }, true);
+  const rootNode: FolderNode = { id: folder.id, list, footer, next: 0, loaded: false, loading: false, truncated: false, entries: [] };
+  nodes.add(rootNode);
+  void load(rootNode, true);
   return { setOptions, dispose() { if (disposed) return; disposed = true; clearSelection(); observer?.disconnect(); queue.length = 0; visible.clear(); loaded.clear(); for (const cancel of [...active.values()]) cancel(); for (const { image } of candidates.values()) { image.onload = null; image.onerror = null; image.removeAttribute('src'); } candidates.clear(); } };
 }

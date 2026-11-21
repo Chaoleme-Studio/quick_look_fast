@@ -2,12 +2,22 @@
 
 ![QuickLook Fast 图标](public/branding/app.png)
 
-QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，通过文件管理器入口快速查看内容；关闭预览后程序继续驻留在系统托盘。项目原名 SlowLook，使用 Electron、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 构建。
+QuickLook Fast 是离线优先的跨平台文件预览工具。完成系统接入后，选中文件或文件夹，按空格查看内容，再按一次收起；也可以从窗口选择文件或直接拖放。项目原名 SlowLook，使用 Electron、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 构建，支持 Windows、macOS 和 Linux。
 
-当前版本为 **0.3.0**。不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
+当前版本为 **1.0.0**。不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
+
+## 功能亮点
+
+- **空格预览**：在支持的文件管理器或桌面中选中项目，按 Space 打开、再次按 Space 收起。即使点击了按钮或设置开关，默认仍可用空格关闭预览；这一行为可以在设置中关闭。
+- **文件夹和压缩包**：按层级浏览目录，选中文件在旁边直接预览；ZIP/RAR 支持查看目录及按需打开条目，ZIP 中的 ZIP 可继续浏览。可隐藏 `.DS_Store` 和 `__MACOSX`，只改变预览列表，不修改原文件。
+- **文档与表格**：查看 Word、Excel、PPT、PDF 等内容；Word 和 PPTX 支持预览翻页，Word 还可按标题导航。复杂字体、图表、动画或排版可能与原程序不同。
+- **图片、媒体和更多格式**：支持图片缩放、旋转和信息查看，音视频播放，以及代码、Markdown、3D、CAD、设计文件等内容或结构预览。[完整格式和边界](docs/formats.md)。
+- **按自己的习惯使用**：固定预览窗口、调整文本行号和换行、切换文档导航与页码、控制缩略图及自动播放。macOS 可分别控制 Dock、菜单栏图标与 Finder 快捷键。
+- **本地优先**：预览在本机进行；手动检查更新时才连接 GitHub，不上传预览文件。
 
 ## 目录
 
+- [功能亮点](#功能亮点)
 - [界面截图](#界面截图)
 - [下载与运行](#下载与运行)
 - [基本操作](#基本操作)
@@ -23,7 +33,25 @@ QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，�
 
 ## 界面截图
 
-以下图片使用合成文件夹、合成 PDF 与公开 PPTX 示例。来源与重建方法见[打包与维护](docs/releasing.md#重建文档截图)。
+Windows、macOS 和 Linux 都提供文件夹列表与内容预览。点击图片可查看原尺寸。系统窗口边框及快捷键接入方式因平台而异；各平台的具体能力与验证范围见[平台说明](docs/platforms.md)。
+
+| Windows 文件夹预览 | macOS 文件夹预览 | Linux 文件夹预览 |
+| --- | --- | --- |
+| [![Windows 文件夹预览](docs/screenshots/folder.png)](docs/screenshots/folder.png) | [![macOS 文件夹预览](docs/screenshots/macos-folder.png)](docs/screenshots/macos-folder.png) | [![Linux 文件夹预览](docs/screenshots/linux-folder.png)](docs/screenshots/linux-folder.png) |
+
+Linux 图为 Ubuntu 独立虚拟显示会话中运行的应用窗口内容，不含窗口管理器边框；目录使用合成示例。
+
+Word、Excel 等文档也可以直接在文件夹内选择预览：
+
+| Word 文档 | Excel 表格 |
+| --- | --- |
+| [![Word 文档预览](docs/screenshots/word.png)](docs/screenshots/word.png) | [![Excel 表格预览](docs/screenshots/excel.png)](docs/screenshots/excel.png) |
+
+压缩包里还有压缩包时，也可以继续打开内层 ZIP，查看其中的文档：
+
+[![嵌套 ZIP 与 Word 文档预览](docs/screenshots/archive-nested.png)](docs/screenshots/archive-nested.png)
+
+以下 Windows 图片使用合成文件夹、合成 PDF 与公开 PPTX 示例。来源与重建方法见[打包与发布](docs/releasing.md#重建文档截图)。
 
 <!-- screenshots:start -->
 
@@ -59,14 +87,14 @@ QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，�
 | macOS | macOS 26 及以上，Apple Silicon / arm64 | `QuickLook Fast.app` | Finder 支持可选的 Space 接管或组合键。应用仅临时签名，未进行 Apple 公证。 |
 | Linux | x64 / arm64，GNOME / KDE Plasma 等 | `./quicklook-fast` | 使用 GNOME 预览服务或 Dolphin/Nemo 菜单，需满足 Electron 系统依赖。 |
 
-本地开发构建位于 `build/versions/V1/`、`V2/` 等逐个编号的目录中，编号是**本地构建迭代号**，与软件版本 `0.3.0` 分开。新构建不会覆盖已有编号。
+本地开发构建位于 `build/versions/V1/`、`V2/` 等逐个编号的目录中，编号是**本地构建迭代号**，与软件版本 `1.0.0` 分开。新构建不会覆盖已有编号。
 
 ## 基本操作
 
 1. 启动程序；在 Windows 中，程序会在系统托盘常驻。
-2. 在已接入的文件管理器中选中文件，按 **Space** 打开预览；再按 Space 或 **Esc** 收起。
-3. 使用方向键尝试跟随文件管理器的选择；点击图钉固定当前窗口，可以继续预览其他文件。
-4. 关闭预览窗口只会隐藏窗口；从托盘菜单选择“退出”才能结束程序。
+2. 在已接入的文件管理器中选中文件，按 **Space** 打开预览；再按 Space 或 **Esc** 收起。Linux Dolphin 需要先安装菜单并设置快捷键，见 [Linux 接入说明](docs/platforms.md#linux)。
+3. 在支持选区跟随的文件管理器中使用方向键；点击图钉固定当前窗口，可以继续预览其他文件。Dolphin 当前需要先关闭预览、选择另一个文件后重新打开。
+4. 关闭预览窗口只会隐藏窗口；从托盘或菜单栏选择“退出”可结束程序。macOS 若隐藏了两个图标，可通过 Spotlight 重新打开应用窗口，再按 ⌘Q 退出。
 
 顶部“使用默认应用打开”会用系统关联的应用打开当前文件，旁边的文件夹图标可选择其他文件进行预览。图片放大到超出窗口后，可按住鼠标左键拖动查看。
 
@@ -123,7 +151,7 @@ Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前 266 个扩展�
 
 - **Windows**：Explorer、桌面和 Directory Opus 支持已实现的 Space 入口。与 QuickLook、PowerToys Peek 或 DOpus 自带快捷键同时运行时可能冲突。
 - **macOS**：在“设置 → 系统集成”可选择 Finder 使用系统快速查看、`⌘⇧Space` 或由 QuickLook Fast 接管 `Space`。接管需要辅助功能权限。Dock 与菜单栏图标可分别隐藏。
-- **Linux**：解压后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上可尝试为服务菜单设置 Space。
+- **Linux**：解压到固定位置后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上还需要单独配置 Space，并处理其原有的选择模式快捷键。1.0.0 提供可选的实验性 Plasma 桌面接入，运行安装脚本时使用 `--plasma-desktop`；0.3.0 发布包不包含该组件。[详细安装、设置和还原步骤](docs/platforms.md#linux)。
 
 切换自旧 QuickLook 或 SlowLook 时，先退出旧程序并关闭其开机启动。旧设置和插件不会自动迁移。系统权限、Wayland/X11、Finder 和 DOpus 双栏等细节见[平台说明](docs/platforms.md)。
 
@@ -141,7 +169,7 @@ flowchart LR
 | 部分 | 实现 |
 | --- | --- |
 | 桌面与界面 | Electron、TypeScript、Vite；预览窗口和系统托盘由主进程管理。 |
-| 平台入口 | Windows 使用 C# 桥接 Explorer / Directory Opus；macOS 使用 Finder 适配；Linux 使用 GNOME D-Bus 或 Dolphin/Nemo 菜单。 |
+| 平台入口 | Windows 使用 C# 桥接 Explorer / Directory Opus；macOS 使用 Finder 适配；Linux 使用 GNOME D-Bus、Dolphin/Nemo 菜单及可选的 Plasma 桌面组件。 |
 | 文件读取 | 本地令牌 URL 支持范围请求；ZIP 按目录和条目读取，RAR 与 Office 解密使用 Worker。其他格式仍可能完整读取。 |
 | 预览渲染 | 常见图片和音视频由 Chromium 处理；Office、PDF、工程、设计等由 Flyfish 3.3.4 的对应渲染器处理。 |
 | 文档翻页 | PPTX 按幻灯片序号定位；Word OpenXML 按当前预览排版分页。PDF 使用 Flyfish 自带的分页控件。 |

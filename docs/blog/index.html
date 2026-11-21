@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>QuickLook Fast 1.0 · 一篇带图的介绍</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2d42; background: #eff3f7; font-synthesis: none; }
+    * { box-sizing: border-box; }
+    body { margin: 0; line-height: 1.75; }
+    a { color: #285eab; text-decoration-thickness: .08em; text-underline-offset: .2em; }
+    a:focus-visible { outline: 3px solid #68a6f5; outline-offset: 4px; }
+    .hero { color: #f7faff; background: #172942; }
+    .hero-inner, main, footer { width: min(1160px, calc(100% - 48px)); margin-inline: auto; }
+    .hero-inner { padding: 54px 0 60px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: #b7ccea; font-size: 13px; font-weight: 650; letter-spacing: .03em; }
+    .brand img { width: 32px; height: 32px; border-radius: 9px; }
+    .version { margin: 34px 0 12px; color: #a8c9ff; font-size: 12px; font-weight: 700; letter-spacing: .13em; }
+    h1 { max-width: 860px; margin: 0; font-size: clamp(32px, 4.5vw, 53px); letter-spacing: -.035em; line-height: 1.2; }
+    .hero p { max-width: 720px; margin: 20px 0 0; color: #c2d1e4; font-size: 17px; }
+    .hero-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 8px 16px; border: 1px solid #89ace0; border-radius: 9px; color: #edf5ff; font-size: 14px; font-weight: 650; text-decoration: none; }
+    .button.primary { border-color: #afcdff; background: #afcdff; color: #122644; }
+    main { padding: 34px 0 52px; }
+    .intro { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding: 0 4px 15px; color: #667a91; font-size: 13px; }
+    .intro p { margin: 0; }
+    .section { margin-top: 24px; padding: clamp(22px, 3.5vw, 42px); border: 1px solid #dce4ed; border-radius: 18px; background: #fff; box-shadow: 0 10px 35px #263e5d08; }
+    .eyebrow { display: block; color: #587ba8; font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+    h2 { margin: 5px 0 12px; color: #17263b; font-size: clamp(24px, 3vw, 32px); letter-spacing: -.02em; line-height: 1.3; }
+    h3 { margin: 0; color: #273b55; font-size: 15px; }
+    .section-lead { max-width: 760px; margin: 0 0 25px; color: #52657b; font-size: 15px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    figure { min-width: 0; margin: 0; }
+    .shot { overflow: hidden; border: 1px solid #dfe7f0; border-radius: 12px; background: #f6f8fb; }
+    .shot a { display: block; }
+    .shot img { display: block; width: 100%; height: auto; aspect-ratio: 1.42; object-fit: contain; background: #e9eef5; }
+    .shot .label { padding: 13px 15px 15px; }
+    .shot .label p { margin: 3px 0 0; color: #708198; font-size: 12px; }
+    .wide-shot { max-width: 900px; }
+    .wide-shot img { aspect-ratio: auto; }
+    .note { margin: 20px 0 0; padding: 15px 18px; border-left: 3px solid #81a7dc; border-radius: 0 8px 8px 0; color: #536a84; background: #f2f6fb; font-size: 13px; }
+    .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin-top: 26px; }
+    .features p { margin: 6px 0 0; color: #61748a; font-size: 13px; }
+    .closing { margin: 24px 0 0; color: #52657b; font-size: 14px; }
+    footer { padding: 0 4px 42px; color: #73849a; font-size: 12px; }
+    footer p { margin: 3px 0; }
+    @media (max-width: 720px) {
+      .hero-inner, main, footer { width: min(100% - 28px, 1160px); }
+      .hero-inner { padding: 38px 0 42px; }
+      .hero p { font-size: 15px; }
+      .intro { display: block; }
+      .grid, .features { grid-template-columns: 1fr; }
+      .shot img { aspect-ratio: auto; }
+      .section { border-radius: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="brand"><img src="../../public/branding/app.png" alt=""> QuickLook Fast</div>
+      <div class="version">VERSION 1.0 · 文件快速预览</div>
+      <h1>找文件的时候，<br>先按一下空格。</h1>
+      <p>选中文件或文件夹，快速看看内容。Windows、macOS 和 Linux 使用相近的预览界面，帮你少做几次打开和关闭。</p>
+      <nav class="hero-links" aria-label="项目链接">
+        <a class="button primary" href="https://github.com/Chaoleme-Studio/quick_look_fast/releases/tag/v1.0.0">下载 1.0</a>
+        <a class="button" href="https://github.com/Chaoleme-Studio/quick_look_fast">查看项目</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <div class="intro"><p>QuickLook Fast 1.0 · 图文预览</p><p>点击图片可查看原图</p></div>
+    <section class="section" aria-labelledby="folders-title">
+      <span class="eyebrow">01 / 文件夹</span>
+      <h2 id="folders-title">同一个预览习惯，三个系统</h2>
+      <p class="section-lead">按空格查看文件夹；左侧浏览目录，右侧查看选中的内容。系统窗口样式和快捷键接入方式各有区别。</p>
+      <div class="grid">
+        <figure class="shot"><a href="../screenshots/folder.png"><img src="../screenshots/folder.png" alt="Windows 上的文件夹与文件内容预览" loading="lazy"></a><figcaption class="label"><h3>Windows</h3><p>文件夹与内容预览</p></figcaption></figure>
+        <figure class="shot"><a href="../screenshots/macos-folder.png"><img src="../screenshots/macos-folder.png" alt="macOS 上的文件夹与文件内容预览" loading="lazy"></a><figcaption class="label"><h3>macOS</h3><p>Finder 与桌面接入</p></figcaption></figure>
+        <figure class="shot"><a href="../screenshots/linux-folder.png"><img src="../screenshots/linux-folder.png" alt="Linux 上的文件夹与文件内容预览" loading="lazy"></a><figcaption class="label"><h3>Linux</h3><p>文件管理器与桌面接入</p></figcaption></figure>
+      </div>
+      <p class="note">文件夹设置中可在文件夹和 ZIP/RAR 预览里隐藏 <code>.DS_Store</code> 和 <code>__MACOSX</code>；关闭开关后重新显示，文件本身不会被删除。</p>
+    </section>
+    <section class="section" aria-labelledby="archives-title">
+      <span class="eyebrow">02 / 压缩包</span>
+      <h2 id="archives-title">先看一眼压缩包里的内容</h2>
+      <p class="section-lead">浏览 ZIP 或 RAR 的目录，选中里面的文件查看。ZIP 中还有 ZIP 时，也可以继续查看内层内容。常见密码文件会根据情况请求密码，具体支持取决于压缩方式和文件本身。</p>
+      <figure class="shot wide-shot"><a href="../screenshots/archive-nested.png"><img src="../screenshots/archive-nested.png" alt="外层 ZIP、内层 ZIP 与其中的 Word 文档预览" loading="lazy"></a><figcaption class="label"><h3>ZIP 里的 ZIP</h3><p>外层压缩包 → 内层压缩包 → Word 文档</p></figcaption></figure>
+      <p class="note">嵌套深度、条目大小和加密方式等存在限制，详见<a href="https://github.com/Chaoleme-Studio/quick_look_fast/blob/v1.0.0/docs/user-guide.md">使用指南</a>。</p>
+    </section>
+    <section class="section" aria-labelledby="office-title">
+      <span class="eyebrow">03 / 文档与格式</span>
+      <h2 id="office-title">常用文件，先确认再打开</h2>
+      <p class="section-lead">PPTX、Word、Excel、PDF、图片、音视频和代码等都接入了预览。部分专业格式提供内容、结构或元数据查看。</p>
+      <div class="grid">
+        <figure class="shot"><a href="../screenshots/pptx.png"><img src="../screenshots/pptx.png" alt="PPTX 幻灯片预览" loading="lazy"></a><figcaption class="label"><h3>PowerPoint</h3><p>查看幻灯片与页码</p></figcaption></figure>
+        <figure class="shot"><a href="../screenshots/word.png"><img src="../screenshots/word.png" alt="Word 文档预览" loading="lazy"></a><figcaption class="label"><h3>Word</h3><p>文档内容与分页</p></figcaption></figure>
+        <figure class="shot"><a href="../screenshots/excel.png"><img src="../screenshots/excel.png" alt="Excel 工作表预览" loading="lazy"></a><figcaption class="label"><h3>Excel</h3><p>查看工作表内容</p></figcaption></figure>
+      </div>
+      <p class="note">已接入 200 多个扩展名；不同文件的字体、公式、动画和复杂排版可能影响显示效果。<a href="https://github.com/Chaoleme-Studio/quick_look_fast/blob/v1.0.0/docs/formats.md">查看完整格式清单</a></p>
+    </section>
+    <section class="section" aria-labelledby="platforms-title">
+      <span class="eyebrow">04 / 使用方式</span>
+      <h2 id="platforms-title">按你习惯的方式打开</h2>
+      <div class="features">
+        <div><h3>Windows</h3><p>使用已接入的资源管理器入口，选中文件后按空格预览。</p></div>
+        <div><h3>macOS</h3><p>可选择系统快速查看、Space 接管或组合键；Dock 和菜单栏图标可分别设置。</p></div>
+        <div><h3>Linux</h3><p>GNOME Files、Dolphin 和 Plasma 桌面使用不同接入方式；Dolphin 快捷键需要自行配置。</p></div>
+      </div>
+      <p class="closing">Dolphin 预览中暂不支持方向键跟随切换；Plasma 桌面接入是实验性功能。具体安装、权限、兼容性和恢复步骤见<a href="https://github.com/Chaoleme-Studio/quick_look_fast/blob/v1.0.0/docs/platforms.md">平台说明</a>。</p>
+    </section>
+  </main>
+  <footer><p>QuickLook Fast · 截图使用演示数据。Windows 图由 Electron 界面渲染，目录和内容为合成数据；Linux 图在 Ubuntu 虚拟显示中渲染，目录为合成数据。</p><p>项目源码采用 Apache-2.0；第三方组件适用各自的许可证。</p></footer>
+</body>
+</html>

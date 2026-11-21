@@ -15,7 +15,9 @@ test('portable packager keeps numbered versions and assembles each platform', ()
     const root = path.join(temp, `${platform}-${arch}`); fs.mkdirSync(root);
     for (const file of ['build/dist/index.html', 'build/dist-electron/main.js', 'docs/readme.md', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY.md', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tests/fixtures/README.md', '.github/workflows/release.yml',
       'patch/patch-flyfish-pptx.cjs', 'patch/patch-flyfish-docx.cjs', 'patch/flyfish-pptx-chart-fix.cjs', 'patch/patch-flyfish-xlsx.cjs', 'patch/flyfish-xlsx-row-fix.cjs',
-      'electron/platform/linux/install.cjs', 'electron/platform/linux/install-portable.sh', 'public/branding/app.icns', 'public/branding/app.png',
+      'electron/platform/linux/install.cjs', 'electron/platform/linux/install-portable.sh',
+      'electron/platform/linux/plasma/main.qml', 'electron/platform/linux/plasma/helper.cjs', 'electron/platform/linux/plasma/install.cjs',
+      'public/branding/app.icns', 'public/branding/app.png',
       'docs/licenses/Arcade-Look-LICENSE', 'docs/licenses/UnRAR-LICENSE.txt']) write(root, file, 'fixture');
     write(root, 'package.json', JSON.stringify({ version: '0.1.0' }));
     for (const name of ['mime-types', 'node-unrar-js', 'officecrypto-tool', 'dbus-next', 'tiny-dep']) {
@@ -47,7 +49,10 @@ test('portable packager keeps numbered versions and assembles each platform', ()
       const linux = fixture('linux', arch);
       const linuxOutput = path.join(linux.root, 'build/versions/V1');
       for (const file of ['quicklook-fast', 'install-integration.sh', 'resources/app/build/dist/index.html',
-        'resources/app/build/dist-electron/platform/linux/install.cjs', 'resources/app/patch/patch-flyfish-docx.cjs',
+        'resources/app/build/dist-electron/platform/linux/install.cjs',
+        'resources/app/build/dist-electron/platform/linux/plasma/main.qml',
+        'resources/app/build/dist-electron/platform/linux/plasma/helper.cjs',
+        'resources/app/build/dist-electron/platform/linux/plasma/install.cjs', 'resources/app/patch/patch-flyfish-docx.cjs',
         'resources/app/node_modules/dbus-next/package.json', 'resources/app/node_modules/tiny-dep/package.json']) {
         assert.ok(fs.existsSync(path.join(linuxOutput, file)), `missing Linux ${arch} file ${file}`);
       }

@@ -2,11 +2,13 @@ import { readZipDirectory, type ZipDirectory, type ZipEntry, type ZipNameEncodin
 import { extractZipEntry } from './zip-extraction.ts';
 import { requestPassword } from '../../ui/password-prompt.ts';
 import { createSidebarToggle } from '../../ui/sidebar-toggle.ts';
+import { isMacMetadataArchiveEntry } from '../mac-metadata.ts';
 
 interface ZipSource { name: string; url: string; size: number }
 interface Tree { name: string; folders: Map<string, Tree>; files: ZipEntry[] }
 type RenderEntry = (name: string, data: Blob, target: HTMLElement, signal: AbortSignal) => Promise<(() => void) | undefined>;
 interface ArchiveDirectory { entries: ZipEntry[]; zip?: ZipDirectory }
+export interface ArchiveView { (): void; setHideMacMetadata(enabled: boolean): void }
 export interface ContentResponse {
   ok: boolean; code?: string; message?: string; bytes?: ArrayBuffer;
   entries?: Array<{ name: string; directory: boolean; encrypted: boolean; size: number; compressedSize: number }>;
@@ -25,13 +27,14 @@ function contentError(result: ContentResponse): Error {
   return result.code === 'password' ? new ArchivePasswordError(result.message || '请输入密码。') : new Error(result.message || '无法读取压缩包。');
 }
 
-function treeOf(entries: ZipEntry[]): { root: Tree; skipped: number; safeEntries: ZipEntry[] } {
+function treeOf(entries: ZipEntry[], hideMacMetadata: boolean): { root: Tree; skipped: number; safeEntries: ZipEntry[] } {
   const root: Tree = { name: '', folders: new Map(), files: [] };
   let skipped = 0;
   const safeEntries: ZipEntry[] = [];
   for (const entry of entries) {
     const parts = entry.name.split('/').filter(Boolean);
     if (!parts.length || parts.length > 64 || entry.name.startsWith('/') || /^[A-Za-z]:/.test(entry.name) || parts.some((part) => part === '.' || part === '..')) { skipped += 1; continue; }
+    if (hideMacMetadata && isMacMetadataArchiveEntry(entry.name, entry.directory)) continue;
     safeEntries.push(entry);
     const folders = entry.directory ? parts : parts.slice(0, -1);
     let node = root;
@@ -47,7 +50,7 @@ function treeOf(entries: ZipEntry[]): { root: Tree; skipped: number; safeEntries
 
 /** All ZIPs use the same range-based directory and selected-entry reader. */
 export function mountZipPreview(target: HTMLElement, file: ZipSource, onReady: () => void, renderEntry: RenderEntry,
-  options: { label?: string; fullPreview?: () => void } = {}): () => void {
+  options: { label?: string; fullPreview?: () => void } = {}): ArchiveView {
   return mountArchive(target, file, onReady, renderEntry, {
     label: options.label || 'ZIP ARCHIVE',
     async list(encoding, _password, signal) { const zip = await readZipDirectory(file.url, file.size, signal, encoding); return { entries: zip.entries, zip }; },
@@ -60,7 +63,7 @@ export function mountZipPreview(target: HTMLElement, file: ZipSource, onReady: (
 }
 
 /** RAR input is seekable file IO in an isolated WASM worker, never a full-file buffer. */
-export function mountRarPreview(target: HTMLElement, file: ZipSource, onReady: () => void, renderEntry: RenderEntry, task: ContentTask): () => void {
+export function mountRarPreview(target: HTMLElement, file: ZipSource, onReady: () => void, renderEntry: RenderEntry, task: ContentTask): ArchiveView {
   return mountArchive(target, file, onReady, renderEntry, {
     label: 'RAR ARCHIVE',
     async list(_encoding, password, signal) {
@@ -78,7 +81,7 @@ export function mountRarPreview(target: HTMLElement, file: ZipSource, onReady: (
   }, false);
 }
 
-function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void, renderEntry: RenderEntry, backend: ArchiveBackend, showEncoding: boolean, fullPreview?: () => void): () => void {
+function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void, renderEntry: RenderEntry, backend: ArchiveBackend, showEncoding: boolean, fullPreview?: () => void): ArchiveView {
   const root = document.createElement('section');
   root.className = 'zip-view';
   const sidebar = document.createElement('aside'); sidebar.className = 'zip-sidebar';
@@ -116,7 +119,9 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
   let readAbort: AbortController | undefined;
   let entryAbort: AbortController | undefined;
   let cleanupEntry: (() => void) | undefined;
+  let selectedEntry: ZipEntry | undefined;
   let selected = 0;
+  let hideMacMetadata = false;
   let currentTree: Tree | undefined;
   let safeEntries: ZipEntry[] = [];
   let readyCalled = false;
@@ -124,12 +129,13 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
   let entryPassword = '';
   const finishReady = (): void => { if (!readyCalled && !disposed) { readyCalled = true; onReady(); } };
   const clearEntry = (): void => {
-    selected += 1; entryAbort?.abort(); entryAbort = undefined; cleanupEntry?.(); cleanupEntry = undefined;
+    selected += 1; selectedEntry = undefined; entryAbort?.abort(); entryAbort = undefined; cleanupEntry?.(); cleanupEntry = undefined;
   };
 
   const choose = async (entry: ZipEntry): Promise<void> => {
     if (!directory || disposed) return;
     clearEntry();
+    selectedEntry = entry;
     const version = selected;
     const operation = new AbortController(); entryAbort = operation;
     contentTitle.textContent = entry.name;
@@ -156,7 +162,14 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
       if (disposed || version !== selected) return;
       const mount = document.createElement('div'); mount.className = 'zip-child-viewer'; contentBody.replaceChildren(mount);
       const cleanup = await renderEntry(entry.name.split('/').pop() || entry.name, blob, mount, operation.signal);
-      if (disposed || version !== selected) cleanup?.(); else cleanupEntry = cleanup;
+      if (disposed || version !== selected) cleanup?.();
+      else {
+        cleanupEntry = cleanup;
+        // Each archive has a sidebar. Collapse the parent when drilling into a
+        // ZIP so deeply nested archives still have usable space; its existing
+        // toggle lets the user return to the parent file list at any time.
+        if (/\.zip$/i.test(entry.name)) sidebarToggle.setExpanded(false);
+      }
     } catch (error) {
       if (!disposed && version === selected && !operation.signal.aborted) {
         status.textContent = error instanceof Error ? error.message : '无法预览包内文件。';
@@ -229,6 +242,14 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
   };
   search.addEventListener('input', renderList);
 
+  function rebuildTree(): void {
+    if (!directory) return;
+    const tree = treeOf(directory.entries, hideMacMetadata); currentTree = tree.root; safeEntries = tree.safeEntries;
+    summary.textContent = `${safeEntries.length} 项 · 按需读取${tree.skipped ? ` · 跳过 ${tree.skipped} 个异常路径` : ''}`;
+    renderList();
+    if (!safeEntries.length) list.textContent = directory.entries.length ? '没有可显示的项目' : '压缩包为空';
+  }
+
   const load = async (): Promise<void> => {
     readAbort?.abort(); clearEntry();
     if (directory) backend.close?.(directory);
@@ -255,15 +276,22 @@ function mountArchive(target: HTMLElement, file: ZipSource, onReady: () => void,
       if (disposed || operation.signal.aborted) { backend.close?.(result); return; }
       directory = result;
       contentBody.replaceChildren(placeholder);
-      const tree = treeOf(result.entries); currentTree = tree.root; safeEntries = tree.safeEntries;
-      summary.textContent = `${result.entries.length} 项 · 按需读取${tree.skipped ? ` · 跳过 ${tree.skipped} 个异常路径` : ''}`;
-      renderList();
-      if (!result.entries.length) list.textContent = '压缩包为空';
+      rebuildTree();
     } catch (error) {
       if (!disposed && !operation.signal.aborted) { directory = undefined; summary.textContent = error instanceof Error ? error.message : '无法读取压缩包目录。'; }
     } finally { if (readAbort === operation && !operation.signal.aborted) finishReady(); }
   };
   encoding.addEventListener('change', () => { void load(); });
   void load();
-  return () => { disposed = true; readAbort?.abort(); clearEntry(); if (directory) backend.close?.(directory); headerPassword = ''; entryPassword = ''; };
+  const dispose: ArchiveView = Object.assign(() => { disposed = true; readAbort?.abort(); clearEntry(); if (directory) backend.close?.(directory); headerPassword = ''; entryPassword = ''; }, {
+    setHideMacMetadata(enabled: boolean): void {
+      if (disposed || hideMacMetadata === enabled) return;
+      hideMacMetadata = enabled;
+      if (enabled && selectedEntry && isMacMetadataArchiveEntry(selectedEntry.name, selectedEntry.directory)) {
+        clearEntry(); contentTitle.textContent = '选择一个文件进行预览'; contentBody.replaceChildren(placeholder);
+      }
+      rebuildTree();
+    },
+  });
+  return dispose;
 }

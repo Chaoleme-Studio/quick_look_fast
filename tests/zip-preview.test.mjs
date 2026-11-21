@@ -65,6 +65,70 @@ test('ZIP preview expands folders, filters names and opens selected contents', a
   }
 });
 
+test('ZIP metadata filtering updates the tree, search results and selected preview', async () => {
+  const tmp = await mkdtemp(path.join(tmpdir(), 'slowlook-zip-metadata-'));
+  const filename = path.join(tmp, 'fixture.zip');
+  const zip = new JSZip();
+  zip.file('folder/.DS_Store', 'metadata'); zip.file('folder/keep.txt', 'keep');
+  zip.file('__MACOSX/folder/._keep.txt', 'resource fork'); zip.file('.gitignore', 'keep');
+  zip.file('.DS_Store.txt', 'not metadata'); zip.file('__MACOSX-file.txt', 'not a folder');
+  const data = await zip.generateAsync({ type: 'nodebuffer' }); await writeFile(filename, data);
+  const { server, origin } = await startFileServer(() => ({ token: 'metadata', path: filename }));
+  const window = new Window(); const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: window.document });
+  let view;
+  try {
+    const target = window.document.createElement('div'); window.document.body.append(target);
+    await new Promise((ready) => {
+      view = mountZipPreview(target, { name: 'fixture.zip', url: `${origin}/preview/metadata/fixture.zip`, size: data.length }, ready,
+        async (_name, blob, mount) => { mount.textContent = await blob.text(); });
+      view.setHideMacMetadata(true);
+    });
+    assert.ok(![...target.querySelectorAll('.zip-folder')].some((item) => item.textContent.includes('__MACOSX')));
+    assert.ok([...target.querySelectorAll('.zip-file')].some((item) => item.textContent.includes('.gitignore')));
+    assert.ok([...target.querySelectorAll('.zip-file')].some((item) => item.textContent.includes('.DS_Store.txt')));
+    const folder = [...target.querySelectorAll('.zip-folder')].find((item) => item.textContent.includes('folder'));
+    folder.click();
+    assert.ok(![...target.querySelectorAll('.zip-file')].some((item) => item.textContent === '.DS_Store'));
+    const search = target.querySelector('input[type="search"]');
+    search.value = '._keep'; search.dispatchEvent(new window.Event('input', { bubbles: true }));
+    assert.equal(target.querySelectorAll('.zip-file').length, 0, 'search cannot reveal hidden metadata');
+    view.setHideMacMetadata(false);
+    assert.equal(target.querySelectorAll('.zip-file').length, 1, 'disabling the setting restores metadata in search');
+    target.querySelector('.zip-file').click();
+    for (let i = 0; i < 100 && !target.querySelector('.zip-child-viewer'); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(target.querySelector('.zip-child-viewer').textContent, 'resource fork');
+    view.setHideMacMetadata(true);
+    assert.equal(target.querySelector('.zip-child-viewer'), null, 'hiding a selected metadata entry clears it');
+    assert.equal(target.querySelectorAll('.zip-file').length, 0);
+  } finally {
+    view?.(); if (previous) Object.defineProperty(globalThis, 'document', previous); else delete globalThis.document;
+    await window.happyDOM.close(); await new Promise((resolve) => server.close(resolve)); await unlink(filename); await rmdir(tmp);
+  }
+});
+
+test('RAR metadata filtering handles implicit metadata folders', async () => {
+  const window = new Window(); const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: window.document });
+  let view;
+  try {
+    const target = window.document.createElement('div'); window.document.body.append(target);
+    await new Promise((ready) => {
+      view = mountRarPreview(target, { name: 'fixture.rar', url: 'http://local/fixture.rar', size: 100 }, ready, async () => {}, async () => ({ ok: true,
+        entries: ['__MACOSX/a.txt', '.DS_Store', 'keep.txt'].map((name) => ({ name, directory: false, encrypted: false, size: 1, compressedSize: 1 })) }));
+      view.setHideMacMetadata(true);
+    });
+    assert.equal(target.querySelectorAll('.zip-folder').length, 0);
+    assert.equal(target.querySelectorAll('.zip-file').length, 1);
+    assert.match(target.querySelector('.zip-file').textContent, /keep\.txt/);
+    view.setHideMacMetadata(false);
+    assert.equal(target.querySelectorAll('.zip-folder').length, 1);
+    assert.equal(target.querySelectorAll('.zip-file').length, 2);
+  } finally {
+    view?.(); if (previous) Object.defineProperty(globalThis, 'document', previous); else delete globalThis.document; await window.happyDOM.close();
+  }
+});
+
 test('ZIP asks for a password, permits retry, and previews the selected entry', async () => {
   const tmp = await mkdtemp(path.join(tmpdir(), 'slowlook-zip-password-'));
   const filename = path.join(tmp, 'encrypted.zip');

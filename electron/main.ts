@@ -1,4 +1,4 @@
-import { app, BrowserWindow, crashReporter, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell, systemPreferences, Tray } from 'electron';
+import { app, BrowserWindow, crashReporter, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, session, shell, systemPreferences, Tray } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, stat } from 'node:fs/promises';
@@ -16,6 +16,7 @@ import { checkForUpdates } from './support/update-checker';
 import { recordDiagnostic } from './support/diagnostics';
 import { enableLocalCrashReports } from './support/crash-reporting';
 import { resolveMarkdownImage } from './files/markdown-images';
+import { linuxPreviewWindowGeometry } from './platform/linux/window-sizing';
 import type { Server } from 'node:http';
 import type { LinuxPreviewer } from './platform/linux/previewer';
 
@@ -185,11 +186,29 @@ function hideWindow(ctx: PreviewContext): void {
 
 function createPreviewWindow(previous?: PreviewContext): PreviewContext {
   const previousBounds = previous && !previous.disposed && !previous.window.isDestroyed() ? previous.window.getBounds() : undefined;
-  const win = new BrowserWindow({
+  const isLinux = process.platform === 'linux';
+  const wayland = isLinux && process.env.XDG_SESSION_TYPE?.toLowerCase() === 'wayland';
+  let windowGeometry: Electron.BrowserWindowConstructorOptions = {
     width: 1080, height: 760, minWidth: 640, minHeight: 480,
     ...(previousBounds ? { x: previousBounds.x + 36, y: previousBounds.y + 36 } : {}),
+  };
+  if (isLinux) {
+    // Wayland does not expose the global pointer or window coordinates. Let
+    // its compositor place the window, and use the primary display's work area.
+    let display = screen.getPrimaryDisplay();
+    if (!wayland) {
+      try { display = previousBounds ? screen.getDisplayMatching(previousBounds) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()); }
+      catch { /* Keep the primary display when the pointer/display is unavailable. */ }
+    }
+    windowGeometry = linuxPreviewWindowGeometry(display.workArea, previousBounds, !wayland);
+  }
+  const win = new BrowserWindow({
+    ...windowGeometry,
     show: false, alwaysOnTop: false, skipTaskbar: process.platform === 'win32',
-    icon: path.join(rendererRoot, 'branding', 'app.png'), frame: false, backgroundColor: '#11141b',
+    icon: path.join(rendererRoot, 'branding', 'app.png'), frame: isLinux, backgroundColor: '#11141b',
+    // The compositor's real frame provides interactive resize on both X11 and
+    // Wayland. On Wayland setSize/setPosition cannot replace a native drag.
+    ...(isLinux ? { resizable: true, hasShadow: true, autoHideMenuBar: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'), contextIsolation: true,
       nodeIntegration: false, sandbox: true, backgroundThrottling: true,

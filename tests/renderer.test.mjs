@@ -96,7 +96,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       readDirectory: async (id, offset) => id === 'root-folder'
         ? { entries: [{ name: '资料', kind: 'directory', id: 'child-folder' }, { name: '笔记.txt', kind: 'file', id: 'folder-note' }, { name: '网页.html', kind: 'file', id: 'folder-html' },
           { name: '加密.xlsx', kind: 'file', id: 'folder-protected' }, { name: '大文件.log', kind: 'file', id: 'folder-large' },
-          { name: '音乐.mp3', kind: 'file', id: 'folder-audio' }], nextOffset: null, truncated: false }
+          { name: '音乐.mp3', kind: 'file', id: 'folder-audio' }, { name: '.DS_Store', kind: 'file', id: 'folder-mac-metadata' },
+          { name: '__MACOSX', kind: 'directory', id: 'folder-mac-dir' }], nextOffset: null, truncated: false }
         : { entries: [{ name: 'nested.md', kind: 'file' }], nextOffset: null, truncated: false },
       openDirectoryFile: async (id) => {
         if (id === 'folder-note') { activeFile = { token: 'folder-note', path: example }; return { url: `${origin}/preview/folder-note/example.txt`, name: '笔记.txt', size: 32 }; }
@@ -358,6 +359,97 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     for (let attempt = 0; attempt < 150 && !window.document.querySelector('.zip-content .html-preview iframe'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.match(window.document.querySelector('.zip-content .html-preview iframe')?.getAttribute('sandbox') || '', /allow-scripts/, 'an HTML entry in an archive uses the same isolated viewer');
 
+    // Nested ZIPs retain the application's bounded, searchable archive viewer
+    // and inherit the live metadata setting instead of opening a generic viewer.
+    const innerZip = new JSZip();
+    innerZip.file('story.html', '<p>Nested archive content</p>');
+    innerZip.file('.DS_Store', 'metadata');
+    for (const format of ['docx', 'xlsx', 'pptx']) {
+      innerZip.file(`document.${format}`, await readFile(new URL(`./fixtures/office-sample.${format}`, import.meta.url)));
+    }
+    const outerZip = new JSZip();
+    outerZip.file('inner.zip', await innerZip.generateAsync({ type: 'uint8array' }));
+    outerZip.file('other.html', '<p>Other entry</p>');
+    const nestedBytes = await outerZip.generateAsync({ type: 'nodebuffer' });
+    const nestedPath = path.join(directory, 'outer.zip');
+    await writeFile(nestedPath, nestedBytes);
+    activeFile = { token: 'nested-zip', path: nestedPath };
+    callbacks.start({ name: 'outer.zip' });
+    callbacks.preview({ url: `${origin}/preview/nested-zip/outer.zip`, name: 'outer.zip', size: nestedBytes.length });
+    for (let attempt = 0; attempt < 150 && !window.document.querySelector('.zip-file'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    const nativeCreateObjectURL = URL.createObjectURL;
+    let nestedUrl;
+    URL.createObjectURL = function (value) {
+      const url = nativeCreateObjectURL.call(this, value);
+      nestedUrl ||= url;
+      return url;
+    };
+    try {
+      [...window.document.querySelectorAll('.zip-file')].find((row) => row.textContent.includes('inner.zip')).click();
+      for (let attempt = 0; attempt < 150 && window.document.querySelectorAll('.zip-view').length < 2; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+      const innerView = window.document.querySelectorAll('.zip-view')[1];
+      assert.ok(innerView, 'a ZIP entry opens a second interactive archive view');
+      for (let attempt = 0; attempt < 150 && !innerView.querySelector('.zip-file'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+      const outerView = window.document.querySelectorAll('.zip-view')[0];
+      const outerToggle = outerView.querySelector('.zip-content-heading .preview-sidebar-toggle');
+      assert.equal(outerToggle.getAttribute('aria-expanded'), 'false', 'drilling in collapses the parent sidebar to leave room for the nested viewer');
+      assert.match(innerView.querySelector('.zip-heading strong').textContent, /inner\.zip/);
+      assert.doesNotMatch(innerView.querySelector('.zip-tree').textContent, /\.DS_Store/, 'the nested archive inherits the default metadata filter');
+      const metadataSetting = window.document.querySelector('#settings-hide-mac-metadata');
+      metadataSetting.checked = false; metadataSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+      assert.match(innerView.querySelector('.zip-tree').textContent, /\.DS_Store/, 'changing the filter immediately updates nested archives');
+      metadataSetting.checked = true; metadataSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+      for (const format of ['docx', 'xlsx', 'pptx']) {
+        [...innerView.querySelectorAll('.zip-file')].find((row) => row.textContent.includes(`document.${format}`)).click();
+        const rendered = () => {
+          const shadow = innerView.querySelector('.viewer-root')?.shadowRoot;
+          return format === 'docx' ? shadow?.querySelector('.docx') : format === 'xlsx' ? shadow?.querySelector('canvas')
+            : shadow?.querySelector('.flyfish-pptx-content')?.dataset.renderState === 'ready';
+        };
+        for (let attempt = 0; attempt < 500 && !rendered(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.ok(rendered(), `${format} inside the nested ZIP reaches its document renderer`);
+      }
+      [...innerView.querySelectorAll('.zip-file')].find((row) => row.textContent.includes('story.html')).click();
+      for (let attempt = 0; attempt < 150 && !innerView.querySelector('.html-preview iframe'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(innerView.querySelector('.html-preview iframe'), 'a file in the inner archive can be previewed');
+      outerToggle.click();
+      assert.equal(outerToggle.getAttribute('aria-expanded'), 'true', 'the parent list remains available through its toggle');
+      [...outerView.querySelectorAll('.zip-file')].find((row) => row.textContent.includes('other.html')).click();
+      assert.equal(window.document.querySelectorAll('.zip-view').length, 1, 'switching the outer entry closes the nested viewer');
+      assert.ok(nestedUrl, 'the inner archive has a temporary URL');
+      await assert.rejects(fetch(nestedUrl), 'switching the outer entry releases the inner archive URL');
+    } finally { URL.createObjectURL = nativeCreateObjectURL; }
+
+    const lastZip = new JSZip(); lastZip.file('content.txt', 'deep');
+    let deepBytes = await lastZip.generateAsync({ type: 'uint8array' });
+    for (let depth = 5; depth >= 1; depth--) {
+      const zip = new JSZip(); zip.file(`layer-${depth}.zip`, deepBytes);
+      deepBytes = await zip.generateAsync({ type: 'uint8array' });
+    }
+    const deepPath = path.join(directory, 'deep.zip'); await writeFile(deepPath, deepBytes);
+    activeFile = { token: 'deep-zip', path: deepPath };
+    callbacks.start({ name: 'deep.zip' });
+    callbacks.preview({ url: `${origin}/preview/deep-zip/deep.zip`, name: 'deep.zip', size: deepBytes.length });
+    for (let depth = 1; depth <= 5; depth++) {
+      let view;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        view = window.document.querySelectorAll('.zip-view')[depth - 1];
+        if (view?.querySelector('.zip-file')) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const row = [...view.querySelectorAll('.zip-file')].find((item) => item.textContent.includes(`layer-${depth}.zip`));
+      assert.ok(row, `nested layer ${depth} is selectable`);
+      row.click();
+      if (depth < 5) {
+        for (let attempt = 0; attempt < 150 && window.document.querySelectorAll('.zip-view').length <= depth; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(window.document.querySelectorAll('.zip-view').length, depth + 1);
+      } else {
+        for (let attempt = 0; attempt < 150 && !view.querySelector('.zip-content-body').textContent.includes('超过 4 层'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.match(view.querySelector('.zip-content-body').textContent, /超过 4 层/, 'deep nesting is stopped with an explanatory error');
+        assert.equal(window.document.querySelectorAll('.zip-view').length, 5);
+      }
+    }
+
     // After a failure, new selections must load normally rather than retain the old error.
     for (const [name, data, expected] of [
       ['next.json', '{"message":"SlowLook recovered after an error"}', /SlowLook recovered after an error/],
@@ -590,6 +682,17 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     folderPreviewSetting.checked = false; folderPreviewSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
     assert.equal(window.document.querySelector('.folder-detail').hidden, true, 'folder file preview can be disabled immediately');
     folderPreviewSetting.checked = true; folderPreviewSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+    const hideMacMetadataSetting = window.document.querySelector('#settings-hide-mac-metadata');
+    const metadataRow = window.document.querySelector('[data-folder-file="folder-mac-metadata"]').closest('li');
+    assert.equal(hideMacMetadataSetting.checked, true, 'macOS metadata is hidden by default');
+    assert.equal(metadataRow.hidden, true);
+    hideMacMetadataSetting.checked = false; hideMacMetadataSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.equal(window.localStorage.getItem('slowlook.hideMacMetadata'), 'false', 'the setting persists');
+    assert.equal(metadataRow.hidden, false, 'the current folder updates without reopening');
+    window.localStorage.setItem('slowlook.hideMacMetadata', 'true');
+    window.dispatchEvent(new window.StorageEvent('storage', { key: 'slowlook.hideMacMetadata', newValue: 'true' }));
+    assert.equal(hideMacMetadataSetting.checked, true, 'changes from another preview window synchronize');
+    assert.equal(metadataRow.hidden, true);
     window.document.querySelector('#settings-close').click();
     window.HTMLMediaElement.prototype.pause = function () {};
     window.HTMLMediaElement.prototype.load = function () {};

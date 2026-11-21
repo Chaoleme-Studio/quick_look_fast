@@ -108,6 +108,7 @@ if (process.platform === 'linux') {
   const installer = path.join(app, 'build', 'dist-electron', 'platform', 'linux');
   fs.mkdirSync(installer, { recursive: true });
   fs.copyFileSync(path.join(root, 'electron', 'platform', 'linux', 'install.cjs'), path.join(installer, 'install.cjs'));
+  fs.cpSync(path.join(root, 'electron', 'platform', 'linux', 'plasma'), path.join(installer, 'plasma'), { recursive: true });
   fs.copyFileSync(path.join(root, 'electron', 'platform', 'linux', 'install-portable.sh'), path.join(output, 'install-integration.sh'));
   fs.chmodSync(path.join(output, 'install-integration.sh'), 0o755);
 }

@@ -7,7 +7,7 @@ import { installImageWheelZoom } from './preview/image/image-wheel-zoom';
 import { mountBrowserImage, supportsBrowserImage } from './preview/image/browser-image';
 import { formatDimensions, isImageFile, readImageDimensions, type ImageDimensions } from './preview/image/image-metadata';
 import { showNestedImageDimensions, watchRenderedDimensions } from './preview/image/rendered-dimensions';
-import { mountZipPreview, mountRarPreview, type ContentRequest, type ContentResponse } from './preview/archive/zip-preview';
+import { mountZipPreview, mountRarPreview, type ArchiveView, type ContentRequest, type ContentResponse } from './preview/archive/zip-preview';
 import { requestPassword } from './ui/password-prompt';
 import { fileInfoDetails, formatSize, showPhotoExif, type PreviewFile } from './ui/file-info';
 import { mountAudioWaveform } from './preview/media/audio-waveform';
@@ -63,6 +63,7 @@ declare global {
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('找不到应用容器');
 const isMac = window.slowLook.platform === 'darwin';
+const isLinux = window.slowLook.platform === 'linux';
 
 const settingsGroups = [
   { id: 'general', label: '常规', eyebrow: 'GENERAL', description: '让预览符合你的使用习惯', rows: [
@@ -81,6 +82,7 @@ const settingsGroups = [
   { id: 'folder', label: '文件夹', eyebrow: 'FOLDERS', description: '按需浏览文件夹和其中的文件', rows: [
     { id: 'folder-preview', title: '文件夹内文件预览', detail: '选择文件后在右侧显示内容，关闭后使用完整目录宽度' },
     { id: 'folder-thumbnails', title: '显示图片缩略图', detail: '按可见范围加载常见图片；其他格式显示类型图标' },
+    { id: 'hide-mac-metadata', title: '隐藏 macOS 系统文件', detail: '在文件夹和压缩包预览中隐藏 .DS_Store 文件和 __MACOSX 文件夹' },
   ] },
   { id: 'integration', label: '系统集成', eyebrow: 'INTEGRATIONS', description: '连接系统的文件管理器', rows: isMac ? [
     { id: 'show-dock', title: '在 Dock 中显示', detail: '显示 QuickLook Fast 的应用图标' },
@@ -110,7 +112,7 @@ const integrationNote = `
 `;
 
 app.innerHTML = `
-  <div class="window">
+  <div class="window${isLinux ? ' window--native-frame' : ''}">
     <header class="titlebar">
       <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>QuickLook Fast</span></div>
       <div class="file-meta" aria-live="polite"><span id="file-name"></span><span id="file-size"></span></div>
@@ -200,11 +202,13 @@ const htmlScriptsSetting = element<HTMLInputElement>('#settings-html-scripts');
 const documentPagesSetting = element<HTMLInputElement>('#settings-document-pages');
 const folderPreviewSetting = element<HTMLInputElement>('#settings-folder-preview');
 const folderThumbnailsSetting = element<HTMLInputElement>('#settings-folder-thumbnails');
+const hideMacMetadataSetting = element<HTMLInputElement>('#settings-hide-mac-metadata');
 const pinButton = element<HTMLButtonElement>('#pin-window');
 let controller: ViewerController | undefined;
 const nestedControllers = new Set<ViewerController>();
 const pageNavigations = new Set<PageNavigation>();
 const htmlPreviews = new Set<HtmlPreview>();
+const archiveViews = new Set<ArchiveView>();
 let removeMainImageWheel: (() => void) | undefined;
 let disposeMainPageNavigation: (() => void) | undefined;
 let media: HTMLMediaElement | undefined;
@@ -318,7 +322,7 @@ function syncPin(): void {
 }
 syncPin();
 window.slowLook.onPinState((value) => { pinned = value; syncPin(); });
-const rendererSettings = ([[navigationSetting, 'navigation'], [spaceClosesPreviewSetting, 'spaceClosesPreview'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [documentPagesSetting, 'documentPages'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const)
+const rendererSettings = ([[navigationSetting, 'navigation'], [spaceClosesPreviewSetting, 'spaceClosesPreview'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [documentPagesSetting, 'documentPages'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails'], [hideMacMetadataSetting, 'hideMacMetadata']] as const)
   .filter(([, key]) => !isMac || key !== 'navigation');
 function applyRendererSetting(key: typeof rendererSettings[number][1], checked: boolean): void {
   if (key === 'autoplay') {
@@ -327,7 +331,10 @@ function applyRendererSetting(key: typeof rendererSettings[number][1], checked: 
       if (checked) void player.play().catch(() => undefined);
     }
   }
-  if (key === 'folderPreview' || key === 'folderThumbnails') folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
+  if (key === 'folderPreview' || key === 'folderThumbnails' || key === 'hideMacMetadata') {
+    folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked, hideMacMetadata: hideMacMetadataSetting.checked });
+  }
+  if (key === 'hideMacMetadata') for (const archive of archiveViews) archive.setHideMacMetadata(checked);
   if (key === 'markdownToc') setupMarkdownToc();
   if (key === 'htmlScripts') for (const view of htmlPreviews) view.setScriptsEnabled(checked);
   if (key === 'documentPages') for (const navigation of pageNavigations) navigation.setEnabled(checked);
@@ -403,6 +410,12 @@ function trackedHtmlPreview(target: HTMLElement, source: HtmlPreviewSource, onRe
   const view = mountHtmlPreview(target, source, htmlScriptsSetting.checked, onReady);
   htmlPreviews.add(view);
   return () => { htmlPreviews.delete(view); view.dispose(); };
+}
+
+function trackedArchive(view: ArchiveView): () => void {
+  archiveViews.add(view);
+  view.setHideMacMetadata(hideMacMetadataSetting.checked);
+  return () => { archiveViews.delete(view); view(); };
 }
 
 function loadMarkdownImages(mount: HTMLElement, url: string, isCurrent: () => boolean): void {
@@ -812,7 +825,30 @@ function clarifySearchCount(mount: HTMLElement): void {
   mount.shadowRoot?.append(style);
 }
 
-async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, signal: AbortSignal, archiveOwner = currentPreview): Promise<(() => void) | undefined> {
+async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, signal: AbortSignal, archiveOwner = currentPreview, archiveDepth = 0): Promise<(() => void) | undefined> {
+  if (/\.zip$/i.test(name)) {
+    // The parent archive has already bounded this entry to 64 MiB. Give each
+    // nested ZIP its own range-readable URL and revoke it on selection change.
+    // A depth limit prevents deeply nested archives retaining unbounded blobs.
+    if (archiveDepth >= 4) throw new Error('压缩包嵌套超过 4 层预览上限。');
+    if (signal.aborted) return undefined;
+    const url = URL.createObjectURL(blob);
+    let cleanup: (() => void) | undefined;
+    try {
+      cleanup = trackedArchive(mountZipPreview(target, { name, url, size: blob.size }, () => undefined,
+        (childName, child, mount, childSignal) => renderZipEntry(childName, child, mount, childSignal, archiveOwner, archiveDepth + 1)));
+    } catch (error) { URL.revokeObjectURL(url); throw error; }
+    let disposed = false;
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      cleanup?.();
+      URL.revokeObjectURL(url);
+    };
+    if (signal.aborted) { dispose(); return undefined; }
+    signal.addEventListener('abort', dispose, { once: true });
+    return () => { signal.removeEventListener('abort', dispose); dispose(); };
+  }
   if (/\.(?:html|htm)$/i.test(name)) {
     if (signal.aborted) return undefined;
     const cleanup = trackedHtmlPreview(target, { url: '', size: blob.size, blob }, () => undefined);
@@ -936,8 +972,8 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
   }
   if (/\.(zip|rar)$/i.test(file.name)) {
     const cleanup = /\.zip$/i.test(file.name)
-      ? mountZipPreview(target, file, () => undefined, archiveEntry)
-      : mountRarPreview(target, file, () => undefined, archiveEntry, contentTask);
+      ? trackedArchive(mountZipPreview(target, file, () => undefined, archiveEntry))
+      : trackedArchive(mountRarPreview(target, file, () => undefined, archiveEntry, contentTask));
     return disposeOnAbort(cleanup);
   }
   if (supportsBrowserImage(file.name) && !forceFlyfishImage) {
@@ -1117,8 +1153,8 @@ async function previewFile(file: PreviewFile): Promise<void> {
       if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
     };
     disposeZip = /\.zip$/i.test(file.name)
-      ? mountZipPreview(viewerHost, file, ready, renderZipEntry)
-      : mountRarPreview(viewerHost, file, ready, renderZipEntry, contentTask);
+      ? trackedArchive(mountZipPreview(viewerHost, file, ready, renderZipEntry))
+      : trackedArchive(mountRarPreview(viewerHost, file, ready, renderZipEntry, contentTask));
     return;
   }
   if (supportsBrowserImage(file.name)) {
@@ -1323,7 +1359,7 @@ window.slowLook.onDirectory((folder) => {
     loading.hidden = true;
     if (lastReadyGeneration !== current) { lastReadyGeneration = current; window.slowLook.metric('content-ready'); }
   }, { open: window.slowLook.openDirectoryFile, render: renderFolderFile, release: () => window.slowLook.releaseDirectoryPreview(folder.id) },
-  { inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
+  { inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked, hideMacMetadata: hideMacMetadataSetting.checked });
 });
 window.slowLook.onClear(clearPreview);
 window.slowLook.onProgress((progress) => {

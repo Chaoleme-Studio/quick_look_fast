@@ -10,7 +10,10 @@ button { font: inherit; cursor: pointer; }
 button:focus-visible { outline: 2px solid #91b6ff; outline-offset: 2px; }
 [hidden] { display: none !important; }
 .window { display: flex; flex-direction: column; border: 1px solid #353c4b; border-radius: 9px; background: #171b24; }
+.window--native-frame { border: 0; border-radius: 0; }
+.window--native-frame .brand, .window--native-frame .window-actions .divider, .window--native-frame .window-actions .close-action { display: none; }
 .titlebar { height: 58px; flex: 0 0 58px; display: flex; align-items: center; gap: 26px; padding: 0 10px 0 20px; background: #191d26; border-bottom: 1px solid #303642; -webkit-app-region: drag; }
+.window--native-frame .titlebar { height: 48px; flex-basis: 48px; gap: 12px; padding-left: 16px; -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -0.02em; font-size: 15px; white-space: nowrap; }
 .brand-mark { width: 22px; height: 22px; border-radius: 6px; background: url('/branding/app.png') center / cover no-repeat; }
 .file-meta { flex: 1; min-width: 0; display: flex; justify-content: center; align-items: center; gap: 12px; font-size: 12px; color: #a6afbf; }
@@ -310,5 +313,26 @@ kbd { border: 1px solid #4a5361; border-bottom-color: #667081; border-radius: 4p
   .open-action { padding: 8px; }
   .settings-panel { grid-template-columns: 145px minmax(0, 1fr); }
   .settings-body { padding: 38px 22px 24px; }
+}
+@media (max-width: 540px) {
+  .window--native-frame .titlebar { gap: 4px; padding: 0 5px; }
+  .window--native-frame .window-actions { gap: 1px; }
+  .window--native-frame .open-action { padding: 6px 5px; font-size: 11px; }
+  .window--native-frame .settings-panel { grid-template-columns: 100px minmax(0, 1fr); }
+  .window--native-frame .settings-brand > span:last-child { display: none; }
+  .window--native-frame .settings-sidebar { padding-inline: 6px; }
+  .window--native-frame .settings-body { padding-inline: 12px; }
+  .window--native-frame .setting-row { gap: 8px; padding-inline: 10px; }
+}
+@media (max-height: 440px) {
+  .window--native-frame .settings-backdrop { padding: 8px; }
+  .window--native-frame .settings-panel { height: 100%; min-height: 0; }
+  .window--native-frame .settings-sidebar { min-height: 0; overflow-y: auto; padding-block: 12px; }
+  .window--native-frame .settings-sidebar h2 { margin-block: 12px; }
+  .window--native-frame .settings-sidebar-footer { display: none; }
+  .window--native-frame .settings-body { min-height: 0; padding-top: 30px; padding-bottom: 16px; }
+  .window--native-frame .settings-close { position: sticky; top: 0; right: auto; z-index: 1; float: right; margin-top: -24px; }
+  .window--native-frame .settings-card { margin-top: 12px; }
+  .window--native-frame .setting-row { min-height: 0; padding-block: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }

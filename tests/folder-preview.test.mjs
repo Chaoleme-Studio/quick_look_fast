@@ -55,6 +55,59 @@ test('folder preview distinguishes formats, switches files and respects settings
   }
 });
 
+test('macOS metadata setting filters loaded pages and nested folders without hiding other files', async () => {
+  const window = new Window(); const saved = new Map();
+  for (const name of ['document', 'HTMLButtonElement']) {
+    saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, value: window[name] });
+  }
+  let view, released = 0;
+  try {
+    const target = window.document.createElement('div'); window.document.body.append(target);
+    const root = [
+      { name: '.DS_Store', kind: 'file', id: 'metadata' }, { name: '__MACOSX', kind: 'directory', id: 'mac-folder' },
+      { name: 'Documents', kind: 'directory', id: 'docs' }, { name: 'keep.txt', kind: 'file', id: 'keep' },
+      { name: '.DS_Store.txt', kind: 'file', id: 'similar' }, { name: '.gitignore', kind: 'file', id: 'dotfile' },
+    ];
+    await new Promise((ready) => {
+      view = mountFolderPreview(target, { id: 'root', name: 'Demo', path: '/Demo' }, async (id, offset) => id === 'docs'
+        ? { entries: [{ name: '.DS_Store', kind: 'file', id: 'nested-metadata' }, { name: '__MACOSX', kind: 'file', id: 'ordinary-file' }], nextOffset: null, truncated: false }
+        : { entries: root.slice(offset, offset + 2), nextOffset: offset + 2 < root.length ? offset + 2 : null, truncated: false }, ready, {
+        async open(id) { return { url: 'http://local/' + id, name: id, size: 1 }; },
+        async render(file, mount) { mount.textContent = file.name; }, release() { released++; },
+      }, { inlinePreview: true, thumbnails: false, hideMacMetadata: true });
+    });
+    assert.match(target.querySelector('.folder-summary').textContent, /已读取 0 项/);
+    assert.ok(target.querySelector('.folder-more'), 'a metadata-only page must still allow loading the next page');
+    target.querySelector('.folder-more').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    target.querySelector('.folder-more').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(target.querySelector('.folder-summary').textContent, /4 项 · 1 个文件夹 · 3 个文件/);
+    assert.equal(target.querySelector('[data-folder-file="metadata"]').closest('li').hidden, true);
+    assert.equal(target.querySelector('[data-folder-file="dotfile"]').closest('li').hidden, false);
+    assert.equal(target.querySelector('[data-folder-file="similar"]').closest('li').hidden, false);
+    const docs = [...target.querySelectorAll('.folder-expand')].find((item) => item.textContent.includes('Documents'));
+    docs.click(); await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(target.querySelector('[data-folder-file="nested-metadata"]').closest('li').hidden, true);
+    assert.equal(target.querySelector('[data-folder-file="ordinary-file"]').closest('li').hidden, false, '__MACOSX is hidden only when it is a folder');
+    view.setOptions({ inlinePreview: true, thumbnails: false, hideMacMetadata: false });
+    assert.equal(target.querySelector('[data-folder-file="metadata"]').closest('li').hidden, false);
+    assert.equal(target.querySelector('[data-folder-file="nested-metadata"]').closest('li').hidden, false);
+    target.querySelector('[data-folder-file="metadata"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(target.querySelector('.folder-child-viewer').textContent, 'metadata');
+    view.setOptions({ inlinePreview: true, thumbnails: false, hideMacMetadata: true });
+    assert.equal(target.querySelector('[data-folder-file="metadata"]').closest('li').hidden, true);
+    assert.equal(target.querySelector('.folder-child-viewer'), null, 'hiding the selected metadata clears its preview');
+    assert.ok(released > 0);
+  } finally {
+    view?.dispose();
+    for (const [name, value] of saved) { if (value) Object.defineProperty(globalThis, name, value); else delete globalThis[name]; }
+    await window.happyDOM.close();
+  }
+});
+
 test('folder thumbnails start only when visible and limit simultaneous reads', async () => {
   const window = new Window(); const saved = new Map(); let observer;
   for (const [name, value] of [['document', window.document], ['HTMLButtonElement', window.HTMLButtonElement], ['IntersectionObserver', class {
