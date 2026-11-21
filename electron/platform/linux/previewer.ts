@@ -102,6 +102,9 @@ export async function startLinuxPreviewer(callbacks: LinuxPreviewCallbacks, supp
   const dbus = suppliedDbus || await import('dbus-next');
   const bus = dbus.sessionBus();
   bus.on('error', (error) => callbacks.status(`GNOME Files 集成不可用：${error.message || String(error)}`));
+  // D-Bus can deliver the activation request as soon as the name is granted,
+  // before the requestName promise resolves.
+  bus.addMethodHandler(createNautilusHandler(dbus, bus, callbacks));
   try {
     const owner = await bus.requestName(NAME, dbus.NameFlag.DO_NOT_QUEUE);
     if (owner !== dbus.RequestNameReply.PRIMARY_OWNER && owner !== dbus.RequestNameReply.ALREADY_OWNER) {
@@ -109,7 +112,6 @@ export async function startLinuxPreviewer(callbacks: LinuxPreviewCallbacks, supp
       callbacks.status('GNOME Files 已有预览程序，QuickLook Fast 未接管空格。');
       return undefined;
     }
-    bus.addMethodHandler(createNautilusHandler(dbus, bus, callbacks));
     callbacks.status('GNOME Files 空格预览已连接。');
     return {
       navigate(key) {

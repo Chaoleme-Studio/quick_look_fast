@@ -1,4 +1,4 @@
-import { app, BrowserWindow, crashReporter, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, crashReporter, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell, systemPreferences, Tray } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, stat } from 'node:fs/promises';
@@ -10,6 +10,8 @@ import { fileResponse } from './files/protocol';
 import { startFileServer, type ActiveFile } from './files/file-server';
 import { DirectoryService } from './files/directory-service';
 import { readStartup, writeStartup } from './platform/login-startup';
+import { selectedFinderFile, startFinderSpaceBridge } from './platform/macos-finder';
+import { defaultMacSettings, isFinderMode, readMacSettings, writeMacSettings, type FinderMode, type MacSettings } from './platform/macos-settings';
 import { checkForUpdates } from './support/update-checker';
 import { recordDiagnostic } from './support/diagnostics';
 import { enableLocalCrashReports } from './support/crash-reporting';
@@ -48,7 +50,7 @@ interface PreviewContext {
 
 const contexts = new Map<Electron.WebContents, PreviewContext>();
 let active: PreviewContext | undefined;
-let tray: Tray;
+let tray: Tray | undefined;
 let bridge: ChildProcessWithoutNullStreams | undefined;
 let fileServer: Server | undefined;
 let fileServerOrigin = '';
@@ -60,6 +62,13 @@ let queuedSecondInstance: { args: string[]; workingDirectory: string } | undefin
 let queuedOpenFile: string | undefined;
 let linuxPreviewer: LinuxPreviewer | undefined;
 const finderShortcut = 'Command+Shift+Space';
+let finderSpace: ReturnType<typeof startFinderSpaceBridge> | undefined;
+let finderRevision = 0;
+let finderSourceId: string | undefined;
+let finderShortcutSerial = 0;
+let finderNavigationReady = false;
+let macSettings = { ...defaultMacSettings };
+let hasMacSettings = false;
 
 function diagnostic(event: string, details: { reason?: string; exitCode?: number; processType?: string } = {}): void {
   try { recordDiagnostic(app.getPath('userData'), event, details); } catch { /* Logging is optional. */ }
@@ -131,6 +140,10 @@ function showWindow(ctx: PreviewContext, focus = true): void {
 function forgetSource(restoreFocus = false): void {
   const sourceId = activeSourceId;
   activeSourceId = undefined;
+  if (finderSourceId) {
+    finderSpace?.forget(finderSourceId);
+    finderSourceId = undefined;
+  }
   writeBridge({ type: 'forget', sourceId, restoreFocus });
 }
 
@@ -153,7 +166,10 @@ function destroyWindow(ctx: PreviewContext): void {
   invalidate(ctx);
   ctx.disposed = true;
   contexts.delete(ctx.window.webContents);
-  if (active === ctx) active = undefined;
+  if (active === ctx) {
+    active = undefined;
+    if (finderSourceId) forgetSource();
+  }
   if (!ctx.window.isDestroyed()) ctx.window.destroy();
 }
 
@@ -194,7 +210,10 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
       invalidate(ctx);
       ctx.disposed = true;
       contexts.delete(contents);
-      if (active === ctx) active = undefined;
+      if (active === ctx) {
+        active = undefined;
+        if (finderSourceId) forgetSource();
+      }
     }
   });
   win.on('show', () => { if (ctx === active) linuxPreviewer?.visibilityChanged(true); syncNativeTopmost(ctx); });
@@ -205,6 +224,12 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
   win.on('unresponsive', () => diagnostic('window-unresponsive'));
   win.on('responsive', () => diagnostic('window-responsive'));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  if (process.platform === 'darwin') win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.meta && !input.control && !input.alt && !input.shift && input.key.toLowerCase() === 'q') {
+      event.preventDefault();
+      app.quit();
+    }
+  });
   win.webContents.on('will-navigate', (event, url) => { if (!url.startsWith('slowlook://app/')) event.preventDefault(); });
   win.webContents.on('did-finish-load', () => {
     ctx.ready = true;
@@ -305,7 +330,10 @@ async function openFile(ctx: PreviewContext, filePath: string, triggeredAt = Dat
   ctx.directories.clear();
   ctx.started = triggeredAt;
   showWindow(ctx, focus);
-  send(ctx, 'preview-start', { name: path.basename(filePath) });
+  send(ctx, 'preview-start', {
+    name: path.basename(filePath),
+    ...(process.platform === 'darwin' ? { finderNavigation: Boolean(finderSourceId && finderNavigationReady) } : {}),
+  });
   try {
     const info = await stat(absolutePath);
     if (ctx.disposed || version !== ctx.version) return;
@@ -378,7 +406,7 @@ function findPath(args: string[], workingDirectory: string): string | undefined 
 }
 
 function trayIcon(): Electron.NativeImage {
-  const iconPath = path.join(rendererRoot, 'branding', 'tray.png');
+  const iconPath = path.join(rendererRoot, 'branding', process.platform === 'darwin' ? 'tray-macos.png' : 'tray.png');
   const branded = nativeImage.createFromPath(iconPath);
   if (!branded.isEmpty()) {
     return branded;
@@ -396,6 +424,109 @@ function trayIcon(): Electron.NativeImage {
     }
   }
   return nativeImage.createFromBitmap(bitmap, { width: side, height: side, scaleFactor: 2 });
+}
+
+function setTrayVisible(visible: boolean): void {
+  if (!visible) { tray?.destroy(); tray = undefined; return; }
+  if (tray) return;
+  tray = new Tray(trayIcon());
+  tray.setToolTip('QuickLook Fast');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 QuickLook Fast', click: () => showWindow(ensureActive()) },
+    { label: '选择文件…', click: () => { const ctx = ensureActive(); void dialog.showOpenDialog(ctx.window, { properties: ['openFile'] }).then((result) => { if (!result.canceled && result.filePaths[0]) { forgetSource(); void openFile(ctx, result.filePaths[0]); } }); } },
+    { label: '选择文件夹…', click: () => { const ctx = ensureActive(); void dialog.showOpenDialog(ctx.window, { properties: ['openDirectory'] }).then((result) => { if (!result.canceled && result.filePaths[0]) { forgetSource(); void openFile(ctx, result.filePaths[0]); } }); } },
+    { type: 'separator' }, { label: '退出', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+  tray.on('double-click', () => showWindow(ensureActive()));
+}
+
+function setFinderMode(mode: FinderMode, promptAccessibility = false): void {
+  const revision = ++finderRevision;
+  if (finderSourceId) forgetSource();
+  finderSpace?.stop();
+  finderSpace = undefined;
+  finderNavigationReady = false;
+  globalShortcut.unregister(finderShortcut);
+  if (mode === 'system') { sendStatus('Finder 空格使用 macOS 快速查看。'); return; }
+  let shouldPrompt = mode === 'space' && promptAccessibility;
+  let shortcutRegistered = false;
+  let shortcutError = false;
+  const updateShortcutStatus = (): void => {
+    if (!shortcutRegistered) sendStatus('无法注册 ⌘⇧Space，请检查系统或其他应用的快捷键。');
+    else if (shortcutError) sendStatus('无法读取 Finder 选区。请在系统设置 → 隐私与安全性 → 自动化中允许控制 Finder。');
+    else sendStatus(finderNavigationReady ? 'Finder 组合键已启用（⌘⇧Space）。'
+      : 'Finder 组合键已启用（⌘⇧Space）。方向键切换需要辅助功能权限。');
+  };
+  if (mode === 'shortcut') {
+    let selecting = false;
+    shortcutRegistered = globalShortcut.register(finderShortcut, async () => {
+      if (selecting) return;
+      selecting = true;
+      try {
+        const selected = await selectedFinderFile();
+        if (revision !== finderRevision) return;
+        shortcutError = false;
+        updateShortcutStatus();
+        if (selected) openFinderPreview(selected, `shortcut-${++finderShortcutSerial}`);
+      } catch (error) {
+        console.error('Finder 集成失败', error);
+        if (revision === finderRevision) { shortcutError = true; updateShortcutStatus(); }
+      } finally { selecting = false; }
+    });
+    updateShortcutStatus();
+    if (!shortcutRegistered) return;
+  } else sendStatus('正在启动 Finder 空格预览…');
+  const binary = app.isPackaged ? path.join(path.dirname(process.execPath), 'QuickLookFast.FinderBridge')
+    : path.join(appRoot, 'build', 'native', 'macos', 'QuickLookFast.FinderBridge');
+  finderSpace = startFinderSpaceBridge(binary, {
+    onFile(filePath, sourceId) {
+      if (revision === finderRevision) openFinderPreview(filePath, sourceId);
+    },
+    onSelection(filePath, sourceId) {
+      const ctx = active;
+      if (revision === finderRevision && macSettings.finderNavigation && finderSourceId === sourceId && ctx?.currentPath &&
+          !ctx.pinned && ctx.window.isVisible() && !ctx.window.isMinimized() && ctx.currentPath !== filePath) {
+        void openFile(ctx, filePath, Date.now(), ctx.window.isFocused());
+      }
+    },
+    onStatus(status) {
+      if (revision !== finderRevision) return;
+      finderNavigationReady = status === 'active';
+      if (mode === 'shortcut') updateShortcutStatus();
+      else if (status === 'active') sendStatus('Finder 空格预览已启用。');
+      else if (status === 'accessibility-required') {
+        sendStatus('请在系统设置 → 隐私与安全性 → 辅助功能中允许 QuickLook Fast，授权后会自动启用空格预览。');
+        if (shouldPrompt) {
+          shouldPrompt = false;
+          systemPreferences.isTrustedAccessibilityClient(true);
+        }
+      }
+      else sendStatus('Finder 空格预览暂不可用，系统快捷键仍有效。可点重新检测。');
+    },
+  }, false, mode === 'space');
+}
+
+function openFinderPreview(filePath: string, sourceId: string): void {
+  forgetSource();
+  finderSourceId = sourceId;
+  openExternalFile(filePath);
+  syncFinderTracking(true);
+}
+
+function syncFinderTracking(rememberSource = false): void {
+  if (!finderSourceId) return;
+  const follow = macSettings.finderNavigation && Boolean(active?.window.isVisible());
+  if ((follow || rememberSource) && active?.currentPath) {
+    finderSpace?.track(finderSourceId, active.currentPath);
+  }
+  if (!follow) finderSpace?.forget(finderSourceId);
+}
+
+function saveMacSettings(next: MacSettings): void {
+  writeMacSettings(app.getPath('userData'), next);
+  macSettings = next;
+  hasMacSettings = true;
+  for (const ctx of contexts.values()) send(ctx, 'mac-settings-changed', macSettings);
 }
 
 function startWindowsBridge(): void {
@@ -447,12 +578,20 @@ if (!hasLock) {
     if (selected) { forgetSource(); openExternalFile(selected); }
     else if (!commandLine.includes('--service')) showWindow(ensureActive());
   });
+  if (process.platform === 'darwin') app.on('activate', (_event, hasVisibleWindows) => {
+    if (initialized && !isQuitting && !hasVisibleWindows) showWindow(ensureActive());
+  });
   app.on('child-process-gone', (_event, details) => diagnostic('child-process-gone', {
     reason: details.reason, exitCode: details.exitCode, processType: details.type,
   }));
 
   app.whenReady().then(async () => {
-    if (process.platform === 'darwin') app.dock?.hide();
+    if (process.platform === 'darwin') {
+      const saved = readMacSettings(app.getPath('userData'));
+      hasMacSettings = Boolean(saved);
+      macSettings = saved || { ...defaultMacSettings };
+      app.setActivationPolicy(macSettings.showDock ? 'regular' : 'accessory');
+    }
     const localFiles = await startFileServer((token) => {
       for (const ctx of contexts.values()) {
         if (ctx.currentFile?.token === token) return ctx.currentFile;
@@ -638,34 +777,65 @@ if (!hasLock) {
       const url = destination === 'organization' ? 'https://www.chaoleme.cn/' : destination === 'flyfish' ? 'https://github.com/flyfish-dev/file-viewer' : destination === 'releases' ? 'https://github.com/Chaoleme-Studio/quick_look_fast/releases/latest' : undefined;
       if (url) void shell.openExternal(url).catch(() => undefined);
     });
-    ipcMain.on('set-finder-shortcut', (event, enabled: unknown) => {
-      if (!fromEvent(event) || process.platform !== 'darwin' || typeof enabled !== 'boolean') return;
-      if (!enabled) { globalShortcut.unregister(finderShortcut); return; }
-      if (globalShortcut.isRegistered(finderShortcut)) return;
-      const registered = globalShortcut.register(finderShortcut, () => {
-        void import('./platform/macos-finder').then(({ selectedFinderFile }) => selectedFinderFile()).then((selected) => {
-          if (selected) { forgetSource(); openExternalFile(selected); }
-        }).catch((error) => { console.error('Finder 集成失败', error); sendStatus('Finder 预览失败，请检查自动化权限。'); showWindow(ensureActive()); });
-      });
-      if (!registered) sendStatus('Finder 快捷键已被占用，请更换其他程序的快捷键。');
+    ipcMain.handle('mac-settings-get', (event, legacyFinderShortcut: unknown) => {
+      if (!fromEvent(event) || process.platform !== 'darwin') return;
+      if (!hasMacSettings && legacyFinderShortcut === true) {
+        try {
+          saveMacSettings({ ...macSettings, finderMode: 'shortcut' });
+          setFinderMode('shortcut');
+        } catch (error) { console.error('无法迁移 Finder 设置', error); }
+      }
+      return macSettings;
+    });
+    ipcMain.handle('mac-settings-set', (event, key: unknown, value: unknown) => {
+      if (!fromEvent(event) || process.platform !== 'darwin') return;
+      let next: MacSettings;
+      if (key === 'finderMode' && isFinderMode(value)) next = { ...macSettings, finderMode: value };
+      else if (key === 'showDock' && typeof value === 'boolean') next = { ...macSettings, showDock: value };
+      else if (key === 'showMenuBar' && typeof value === 'boolean') next = { ...macSettings, showMenuBar: value };
+      else if (key === 'finderNavigation' && typeof value === 'boolean') next = { ...macSettings, finderNavigation: value };
+      else return;
+      try { saveMacSettings(next); }
+      catch (error) {
+        console.error('无法保存 macOS 设置', error);
+        return { settings: macSettings, message: '无法保存设置，请检查应用数据目录的权限。' };
+      }
+      if (key === 'finderMode') setFinderMode(next.finderMode, true);
+      if (key === 'showDock') app.setActivationPolicy(next.showDock ? 'regular' : 'accessory');
+      if (key === 'showMenuBar') setTrayVisible(next.showMenuBar);
+      if (key === 'finderNavigation') syncFinderTracking();
+      return { settings: macSettings };
+    });
+    ipcMain.on('finder-retry', (event) => {
+      if (fromEvent(event) && process.platform === 'darwin' && macSettings.finderMode !== 'system') setFinderMode(macSettings.finderMode, true);
+    });
+    ipcMain.on('finder-open-accessibility', (event) => {
+      if (fromEvent(event) && process.platform === 'darwin' && macSettings.finderMode !== 'system') {
+        void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility').catch(() => {
+          sendStatus('请手动打开系统设置 → 隐私与安全性 → 辅助功能。');
+        });
+      }
     });
     ipcMain.on('navigate-selection', (event, key: string) => {
       const ctx = fromEvent(event);
-      if (!ctx || ctx !== active || ctx.pinned || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key) || !ctx.window.isVisible() || !activeSourceId) return;
+      if (!ctx || ctx !== active || ctx.pinned || !ctx.window.isVisible()) return;
+      if (finderSourceId) {
+        if (macSettings.finderNavigation && finderNavigationReady && ctx.window.isFocused() && (key === 'ArrowUp' || key === 'ArrowDown')) {
+          finderSpace?.navigate(finderSourceId, key);
+        }
+        return;
+      }
+      if (!activeSourceId || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return;
       if (activeSourceId === 'nautilus') { linuxPreviewer?.navigate(key); return; }
       writeBridge({ type: 'navigate', key, sourceId: activeSourceId });
     });
 
     const first = ensureActive();
-    tray = new Tray(trayIcon());
-    tray.setToolTip('QuickLook Fast');
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '打开 QuickLook Fast', click: () => showWindow(ensureActive()) },
-      { label: '选择文件…', click: () => { const ctx = ensureActive(); void dialog.showOpenDialog(ctx.window, { properties: ['openFile'] }).then((result) => { if (!result.canceled && result.filePaths[0]) { forgetSource(); void openFile(ctx, result.filePaths[0]); } }); } },
-      { label: '选择文件夹…', click: () => { const ctx = ensureActive(); void dialog.showOpenDialog(ctx.window, { properties: ['openDirectory'] }).then((result) => { if (!result.canceled && result.filePaths[0]) { forgetSource(); void openFile(ctx, result.filePaths[0]); } }); } },
-      { type: 'separator' }, { label: '退出', click: () => { isQuitting = true; app.quit(); } },
-    ]));
-    tray.on('double-click', () => showWindow(ensureActive()));
+    setTrayVisible(process.platform !== 'darwin' || macSettings.showMenuBar);
+    let startedAtLogin = false;
+    try { startedAtLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin; } catch { /* Keep manual startup usable. */ }
+    const backgroundLaunch = process.argv.includes('--service') || startedAtLogin;
+    if (process.platform === 'darwin') setFinderMode(macSettings.finderMode, !backgroundLaunch);
     await first.loaded;
     startWindowsBridge();
     initialized = true;
@@ -685,16 +855,13 @@ if (!hasLock) {
       ? findPath(queuedSecondInstance.args.slice(1), queuedSecondInstance.workingDirectory)
       : findPath(process.argv.slice(app.isPackaged ? 1 : 2), process.cwd()));
     if (initialFile) await openFile(first, initialFile);
-    else {
-      let startedAtLogin = false;
-      try { startedAtLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin; } catch { /* Keep manual startup usable. */ }
-      if (!process.argv.includes('--service') && !startedAtLogin) showWindow(first);
-    }
+    else if (!backgroundLaunch) showWindow(first);
   }).catch((error) => { console.error('QuickLook Fast 启动失败', error); app.quit(); });
 
   app.on('before-quit', () => {
     diagnostic('app-quit');
-    isQuitting = true; bridge?.kill(); linuxPreviewer?.close(); globalShortcut.unregisterAll(); fileServer?.close(); tray?.destroy();
+    isQuitting = true; finderRevision += 1; finderSpace?.stop();
+    bridge?.kill(); linuxPreviewer?.close(); globalShortcut.unregisterAll(); fileServer?.close(); setTrayVisible(false);
   });
   app.on('window-all-closed', () => { if (isQuitting) app.quit(); });
 }

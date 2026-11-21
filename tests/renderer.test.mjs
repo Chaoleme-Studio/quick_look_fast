@@ -29,7 +29,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
   const topmost = [];
   const pins = [];
   const canvasCalls = [];
-  let selectedFiles = 0, defaultOpens = 0;
+  let selectedFiles = 0, defaultOpens = 0, hiddenPreviews = 0;
   let defaultOpenResult = { ok: true };
 
   try {
@@ -78,7 +78,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       onError: (callback) => { callbacks.error = callback; },
       onIntegrationStatus: (callback) => { callbacks.integrationStatus = callback; },
       metric: (value) => metrics.push(value),
-      hide: () => {},
+      hide: () => { hiddenPreviews += 1; },
       navigate: (key) => navigations.push(key),
       setAlwaysOnTop: (enabled) => topmost.push(enabled),
       setPinned: (enabled) => { pins.push(enabled); callbacks.pinState(enabled); },
@@ -220,6 +220,26 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     const textViewer = window.document.querySelector('.viewer-root').shadowRoot.querySelector('.code-viewer');
     assert.equal(textViewer.dataset.lineNumbers, 'true', 'text line numbers should be enabled by default');
     assert.ok(textViewer.querySelector('.code-line-numbers'));
+
+    const pressSpace = (target) => {
+      const event = new window.KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    window.document.querySelector('#settings-open').click();
+    const spaceSetting = window.document.querySelector('#settings-space-closes-preview');
+    assert.equal(spaceSetting.checked, true);
+    spaceSetting.click();
+    assert.equal(pressSpace(spaceSetting), false, 'when disabled, a focused switch accepts Space');
+    assert.equal(hiddenPreviews, 0);
+    spaceSetting.click();
+    const textField = window.document.createElement('textarea');
+    window.document.querySelector('#group-general').append(textField);
+    assert.equal(pressSpace(textField), false, 'Space remains available in a text field');
+    textField.remove();
+    assert.equal(pressSpace(spaceSetting), true, 'a focused switch cannot consume the close shortcut');
+    assert.equal(hiddenPreviews, 1);
+    assert.equal(window.document.querySelector('#settings').hidden, true);
 
     const codePath = path.join(directory, 'sample.js');
     const codeData = 'const answer = 42;\n// A comment\nanswer++;';
@@ -633,8 +653,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
 
     window.document.querySelector('#settings-open').click();
     const autoplaySetting = window.document.querySelector('#settings-autoplay');
-    autoplaySetting.checked = false;
-    autoplaySetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+    window.dispatchEvent(new window.StorageEvent('storage', { key: 'slowlook.autoplay', newValue: 'false' }));
+    assert.equal(autoplaySetting.checked, false, 'settings changed in another preview apply to this window');
     window.document.querySelector('#settings-close').click();
     callbacks.start({ name: 'sound.mp3' });
     callbacks.preview({ url: `${origin}/preview/audio/sound.mp3`, name: 'sound.mp3', size: 100 });

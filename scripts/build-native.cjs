@@ -2,12 +2,20 @@ const { existsSync, mkdirSync } = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-if (process.platform !== 'win32') {
-  console.log('Windows Explorer integration is built on Windows.');
-  process.exit(0);
-}
-
 const root = path.resolve(__dirname, '..');
+if (process.platform === 'darwin') {
+  const output = path.join(root, 'build', 'native', 'macos');
+  mkdirSync(output, { recursive: true });
+  const result = spawnSync('/usr/bin/xcrun', [
+    'swiftc', '-O', '-target', `${process.arch}-apple-macosx26.0`,
+    path.join(root, 'native', 'macos', 'FinderSpaceBridge.swift'),
+    '-o', path.join(output, 'QuickLookFast.FinderBridge'),
+  ], { stdio: 'inherit' });
+  if (result.error) console.error(result.error.message);
+  process.exit(result.status ?? 1);
+}
+if (process.platform !== 'win32') process.exit(0);
+
 const compiler = path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
 if (!existsSync(compiler)) {
   console.error('未找到 .NET Framework C# 编译器。请安装 .NET Framework 4.8 开发组件。');

@@ -2,10 +2,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const supported = (process.platform === 'win32' && process.arch === 'x64') ||
-  (process.platform === 'linux' && process.arch === 'x64') ||
+  (process.platform === 'linux' && ['x64', 'arm64'].includes(process.arch)) ||
   (process.platform === 'darwin' && process.arch === 'arm64');
 if (!supported) {
-  console.error('只支持在目标系统上构建 Windows x64、Linux x64 或 macOS arm64。');
+  console.error('只支持在目标系统上构建 Windows x64、Linux x64/arm64 或 macOS arm64。');
   process.exit(1);
 }
 
@@ -27,9 +27,11 @@ if (fs.existsSync(output)) throw new Error(`版本目录已存在，拒绝覆盖
 
 const electron = path.join(root, 'node_modules', 'electron', 'dist');
 const bridge = path.join(build, 'native', 'windows', 'QuickLookFast.Bridge.exe');
+const finderBridge = path.join(build, 'native', 'macos', 'QuickLookFast.FinderBridge');
 const iconEditor = path.join(build, 'native', 'windows', 'QuickLookFast.IconEditor.exe');
 const icon = path.join(root, 'public', 'branding', 'app.ico');
-for (const required of [electron, ...(process.platform === 'win32' ? [bridge] : []), path.join(build, 'dist', 'index.html'), path.join(build, 'dist-electron', 'main.js')]) {
+const platformFiles = process.platform === 'win32' ? [bridge] : process.platform === 'darwin' ? [finderBridge] : [];
+for (const required of [electron, ...platformFiles, path.join(build, 'dist', 'index.html'), path.join(build, 'dist-electron', 'main.js')]) {
   if (!fs.existsSync(required)) throw new Error(`构建文件缺失: ${required}`);
 }
 
@@ -42,15 +44,22 @@ if (process.platform === 'darwin') {
   fs.cpSync(path.join(electron, 'Electron.app'), bundle, { recursive: true, verbatimSymlinks: true });
   const macos = path.join(bundle, 'Contents', 'MacOS');
   fs.renameSync(path.join(macos, 'Electron'), path.join(macos, 'QuickLook Fast'));
+  fs.copyFileSync(finderBridge, path.join(macos, 'QuickLookFast.FinderBridge'));
   const plist = path.join(bundle, 'Contents', 'Info.plist');
-  const edit = (key, value) => require('node:child_process').execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${JSON.stringify(value)}`, plist]);
+  const edit = (key, value) => require('node:child_process').execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${JSON.stringify(value)}`, plist], { stdio: 'pipe' });
+  const add = (key, value) => require('node:child_process').execFileSync('/usr/libexec/PlistBuddy', ['-c', `Add :${key} string ${JSON.stringify(value)}`, plist]);
   edit('CFBundleExecutable', 'QuickLook Fast');
   edit('CFBundleName', 'QuickLook Fast');
   edit('CFBundleDisplayName', 'QuickLook Fast');
   edit('CFBundleIdentifier', 'cn.chaoleme.quicklookfast');
+  // Launch as an accessory before Electron loads the user's Dock preference.
+  require('node:child_process').execFileSync('/usr/bin/plutil', ['-replace', 'LSUIElement', '-bool', 'YES', plist]);
   // Electron's distribution includes this key; use Add for runtimes that omit it.
   try { edit('LSMinimumSystemVersion', '26.0'); }
-  catch { require('node:child_process').execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Add :LSMinimumSystemVersion string 26.0', plist]); }
+  catch { add('LSMinimumSystemVersion', '26.0'); }
+  const automationDescription = 'QuickLook Fast needs the selected Finder file or folder to open its preview.';
+  try { edit('NSAppleEventsUsageDescription', automationDescription); }
+  catch { add('NSAppleEventsUsageDescription', automationDescription); }
   const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   edit('CFBundleVersion', version);
   edit('CFBundleShortVersionString', version);

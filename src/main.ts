@@ -14,6 +14,7 @@ import { mountAudioWaveform } from './preview/media/audio-waveform';
 import { mountHtmlPreview, type HtmlPreview, type HtmlPreviewSource } from './preview/web/html-preview';
 import { mountPageNavigation, type PageNavigation } from './preview/document/page-navigation';
 import { mountWordOutline } from './preview/document/word-outline';
+import type { MacSettings } from '../electron/platform/macos-settings';
 import type { ViewerController, ViewerOptions, ViewerState } from '@file-viewer/web-full';
 import type { RendererDefinition } from '@file-viewer/core';
 
@@ -42,9 +43,13 @@ declare global {
       onPinState(listener: (pinned: boolean) => void): void;
       getStartup(): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
       setStartup(enabled: boolean): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
-      setFinderShortcut(enabled: boolean): void;
+      getMacSettings(legacyFinderShortcut: boolean): Promise<MacSettings | undefined>;
+      setMacSetting<K extends keyof MacSettings>(key: K, value: MacSettings[K]): Promise<{ settings: MacSettings; message?: string } | undefined>;
+      onMacSettings(listener: (settings: MacSettings) => void): void;
+      retryFinder(): void;
+      openFinderAccessibility(): void;
       metric(phase: string): void;
-      onStart(listener: (file: { name: string }) => void): void;
+      onStart(listener: (file: { name: string; finderNavigation?: boolean }) => void): void;
       onPreview(listener: (file: PreviewFile) => void): void;
       onDirectory(listener: (folder: FolderPreview) => void): void;
       onClear(listener: () => void): void;
@@ -57,12 +62,14 @@ declare global {
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('找不到应用容器');
+const isMac = window.slowLook.platform === 'darwin';
 
 const settingsGroups = [
   { id: 'general', label: '常规', eyebrow: 'GENERAL', description: '让预览符合你的使用习惯', rows: [
-    { id: 'navigation', title: '方向键切换文件', detail: '在预览中切换文件管理器的选中项' },
+    { id: 'navigation', title: '方向键切换文件', detail: isMac ? '从 Finder 发起预览后，按 ↑ 或 ↓ 切换选中项。需要辅助功能权限' : '在预览中切换文件管理器的选中项' },
+    { id: 'space-closes-preview', title: '空格优先关闭预览', detail: '即使焦点停在按钮或设置开关上，按空格也会收起当前预览' },
     { id: 'autoplay', title: '自动播放音频和视频', detail: '打开后直接播放，关闭预览时停止' },
-    { id: 'startup', title: '开机自动启动', detail: '登录后在后台运行，随时按空格预览' },
+    { id: 'startup', title: '开机自动启动', detail: '登录后在后台启动 QuickLook Fast' },
   ] },
   { id: 'reading', label: '阅读与文本', eyebrow: 'READING', description: '为代码、文本与文档选择舒适的阅读方式', rows: [
     { id: 'document-pages', title: '显示文档页码和翻页', detail: '在 Word 和 PPT 预览中显示页码、切换和跳转' },
@@ -75,11 +82,32 @@ const settingsGroups = [
     { id: 'folder-preview', title: '文件夹内文件预览', detail: '选择文件后在右侧显示内容，关闭后使用完整目录宽度' },
     { id: 'folder-thumbnails', title: '显示图片缩略图', detail: '按可见范围加载常见图片；其他格式显示类型图标' },
   ] },
-  { id: 'integration', label: '系统集成', eyebrow: 'INTEGRATIONS', description: '连接系统的文件管理器', rows: [
-    { id: 'finder-shortcut', title: 'Finder 和桌面快捷键（试验）', detail: '按 ⌘ Shift Space 预览选中文件，需要自动化权限', rowId: 'finder-shortcut-row' },
-  ] },
+  { id: 'integration', label: '系统集成', eyebrow: 'INTEGRATIONS', description: '连接系统的文件管理器', rows: isMac ? [
+    { id: 'show-dock', title: '在 Dock 中显示', detail: '显示 QuickLook Fast 的应用图标' },
+    { id: 'show-menu-bar', title: '在菜单栏中显示', detail: '显示屏幕顶部的预览入口' },
+  ] : [] },
   { id: 'about', label: '关于', eyebrow: 'ABOUT', description: '轻松预览，让文件触手可及', rows: [] },
 ] as const;
+
+const macFinderSettings = `
+  <label class="setting-row" for="settings-finder-mode">
+    <span><strong>Finder 预览快捷键</strong><small id="finder-mode-detail">适用于 Finder 文件列表和桌面</small></span>
+    <select class="settings-select" id="settings-finder-mode" aria-describedby="finder-mode-detail" disabled>
+      <option value="system">macOS 快速查看</option>
+      <option value="shortcut">QuickLook Fast · ⌘⇧Space</option>
+      <option value="space">QuickLook Fast · Space</option>
+    </select>
+  </label>
+`;
+const integrationNote = `
+  <p class="settings-note" role="status"><span id="integration-current-status">等待文件管理器操作</span></p>
+  ${isMac ? `<div class="settings-actions">
+    <button type="button" class="about-link" id="finder-permissions" hidden>打开辅助功能设置</button>
+    <button type="button" class="about-link" id="finder-retry" hidden>重新检测</button>
+  </div>
+  <p class="settings-note" id="mac-settings-message" role="status" hidden></p>
+  <p class="settings-note" id="mac-hidden-reopen" hidden>隐藏两个图标后，可通过 Spotlight 搜索 QuickLook Fast 重新打开窗口。</p>` : ''}
+`;
 
 app.innerHTML = `
   <div class="window">
@@ -104,7 +132,7 @@ app.innerHTML = `
           <p>选择文件或拖放到这里，立即预览。</p>
           <button id="choose-welcome" class="primary-button" type="button">选择文件 <span>↗</span></button>
           <button id="choose-folder" class="secondary-button" type="button">选择文件夹</button>
-          <div class="hint"><kbd>Space</kbd><span>预览文件</span><i></i><kbd>Esc</kbd><span>关闭</span></div>
+          <div class="hint">${isMac ? '' : '<kbd>Space</kbd><span>预览文件</span><i></i>'}<kbd>Esc</kbd><span>关闭</span></div>
         </div>
         <div class="welcome-footer"><span id="integration-status" role="status"></span>本地预览 <span>·</span> Powered by Flyfish File Viewer</div>
       </section>
@@ -127,7 +155,7 @@ app.innerHTML = `
           ${settingsGroups.map((group, index) => `<button type="button" role="tab" id="tab-${group.id}" aria-controls="group-${group.id}" aria-selected="${index === 0}" data-settings-tab="${group.id}" tabindex="${index === 0 ? '0' : '-1'}"><span class="settings-tab-dot"></span>${group.label}</button>`).join('')}
         </nav><div class="settings-sidebar-footer"><span class="status-dot"></span>更改自动保存</div></aside>
         <div class="settings-body"><button id="settings-close" class="close-action settings-close" type="button" aria-label="关闭设置">×</button>
-          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card">${group.rows.map((row) => `<label ${'rowId' in row ? `id="${row.rowId}" hidden` : ''} class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? `<div class="setting-row about-row"><span><strong>版本与更新</strong><small id="app-version">正在读取当前版本…</small><small id="update-status" role="status" aria-live="polite">点击检查更新时才会访问 GitHub。</small></span><span class="about-actions"><button id="check-update" type="button" class="about-link">检查更新</button><button type="button" class="about-link" data-external-link="releases">手动下载 ↗</button></span></div><div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>` : ''}</div>${group.id === 'integration' ? '<p class="settings-note">当前状态：<span id="integration-current-status">等待文件管理器操作</span><br>支持的文件管理器和权限随系统而异，详情见使用文档。</p>' : ''}</section>`).join('')}
+          ${settingsGroups.map((group, index) => `<section id="group-${group.id}" class="settings-group" role="tabpanel" aria-labelledby="tab-${group.id}" data-settings-group="${group.id}" ${index ? 'hidden' : ''}><span class="settings-eyebrow">${group.eyebrow}</span><h3>${group.label}</h3><p class="settings-description">${group.description}</p><div class="settings-card" ${group.id === 'integration' && !isMac ? 'hidden' : ''}>${group.id === 'integration' && isMac ? macFinderSettings : ''}${group.rows.map((row) => `<label class="setting-row"><span><strong>${row.title}</strong><small>${row.detail}</small></span><span class="setting-toggle"><input id="settings-${row.id}" type="checkbox"><span class="toggle-track" aria-hidden="true"></span></span></label>`).join('')}${group.id === 'about' ? `<div class="setting-row about-row"><span><strong>版本与更新</strong><small id="app-version">正在读取当前版本…</small><small id="update-status" role="status" aria-live="polite">点击检查更新时才会访问 GitHub。</small></span><span class="about-actions"><button id="check-update" type="button" class="about-link">检查更新</button><button type="button" class="about-link" data-external-link="releases">手动下载 ↗</button></span></div><div class="setting-row about-row"><span><strong>组织网站</strong><small>了解更多</small></span><button type="button" class="about-link" data-external-link="organization">www.chaoleme.cn ↗</button></div><div class="setting-row about-row"><span><strong>致谢</strong><small>文件预览由 Flyfish File Viewer 提供支持</small></span><button type="button" class="about-link" data-external-link="flyfish">项目主页 ↗</button></div>` : ''}</div>${group.id === 'integration' ? integrationNote : ''}</section>`).join('')}
         </div>
       </section>
     </div>
@@ -162,6 +190,7 @@ const openFeedbackMessage = element('#open-feedback-message');
 const toc = element('#markdown-toc');
 const tocList = element('#markdown-toc-list');
 const navigationSetting = element<HTMLInputElement>('#settings-navigation');
+const spaceClosesPreviewSetting = element<HTMLInputElement>('#settings-space-closes-preview');
 const startupSetting = element<HTMLInputElement>('#settings-startup');
 const autoplaySetting = element<HTMLInputElement>('#settings-autoplay');
 const lineNumbersSetting = element<HTMLInputElement>('#settings-line-numbers');
@@ -169,7 +198,6 @@ const wrapLinesSetting = element<HTMLInputElement>('#settings-wrap-lines');
 const markdownTocSetting = element<HTMLInputElement>('#settings-markdown-toc');
 const htmlScriptsSetting = element<HTMLInputElement>('#settings-html-scripts');
 const documentPagesSetting = element<HTMLInputElement>('#settings-document-pages');
-const finderShortcutSetting = element<HTMLInputElement>('#settings-finder-shortcut');
 const folderPreviewSetting = element<HTMLInputElement>('#settings-folder-preview');
 const folderThumbnailsSetting = element<HTMLInputElement>('#settings-folder-thumbnails');
 const pinButton = element<HTMLButtonElement>('#pin-window');
@@ -196,6 +224,7 @@ let folderView: FolderView | undefined;
 let disposeZip: (() => void) | undefined;
 let generation = 0;
 let isPreviewing = false;
+let finderNavigationAvailable = false;
 let lastReadyGeneration = -1;
 
 function savedSetting(key: string, fallback = true): boolean {
@@ -204,33 +233,82 @@ function savedSetting(key: string, fallback = true): boolean {
     return value === null ? fallback : value === 'true';
   } catch { return fallback; }
 }
-navigationSetting.checked = savedSetting('navigation');
-autoplaySetting.checked = savedSetting('autoplay');
-lineNumbersSetting.checked = savedSetting('lineNumbers');
-wrapLinesSetting.checked = savedSetting('wrapLines', false);
-markdownTocSetting.checked = savedSetting('markdownToc');
-htmlScriptsSetting.checked = savedSetting('htmlScripts');
-documentPagesSetting.checked = savedSetting('documentPages');
-finderShortcutSetting.checked = savedSetting('finderShortcut', false);
-folderPreviewSetting.checked = savedSetting('folderPreview');
-folderThumbnailsSetting.checked = savedSetting('folderThumbnails');
-if (window.slowLook.platform === 'darwin') {
-  element('#finder-shortcut-row').hidden = false;
-  window.slowLook.setFinderShortcut(finderShortcutSetting.checked);
-} else element('#finder-shortcut-row').parentElement!.hidden = true;
+if (isMac) {
+  const finderMode = element<HTMLSelectElement>('#settings-finder-mode');
+  const showDock = element<HTMLInputElement>('#settings-show-dock');
+  const showMenuBar = element<HTMLInputElement>('#settings-show-menu-bar');
+  const status = element('#mac-settings-message');
+  const retry = element<HTMLButtonElement>('#finder-retry');
+  const permissions = element<HTMLButtonElement>('#finder-permissions');
+  const controls = [finderMode, showDock, showMenuBar, navigationSetting];
+  let current: MacSettings | undefined;
+  const showMessage = (message: string): void => { status.textContent = message; status.hidden = !message; };
+  const apply = (settings: MacSettings): void => {
+    current = settings;
+    finderMode.value = settings.finderMode;
+    showDock.checked = settings.showDock;
+    showMenuBar.checked = settings.showMenuBar;
+    navigationSetting.checked = settings.finderNavigation;
+    retry.hidden = settings.finderMode === 'system';
+    permissions.hidden = settings.finderMode === 'system';
+    element('#finder-mode-detail').textContent = settings.finderMode === 'space'
+      ? '接管 Finder 和桌面的空格键，需要辅助功能权限'
+      : settings.finderMode === 'shortcut' ? '使用 Finder 选区，需要自动化权限' : 'Finder 和桌面的空格键由 macOS 处理';
+    element('#mac-hidden-reopen').hidden = settings.showDock || settings.showMenuBar;
+  };
+  const change = async <K extends keyof MacSettings>(key: K, value: MacSettings[K]): Promise<void> => {
+    controls.forEach((control) => { control.disabled = true; });
+    showMessage('');
+    try {
+      const result = await window.slowLook.setMacSetting(key, value);
+      if (!result) throw new Error('设置不可用');
+      if (result.message) { apply(result.settings); showMessage(result.message); }
+    } catch {
+      if (current) apply(current);
+      showMessage('无法更改 macOS 设置。');
+    } finally { controls.forEach((control) => { control.disabled = false; }); }
+  };
+  controls.forEach((control) => { control.disabled = true; });
+  window.slowLook.onMacSettings(apply);
+  void window.slowLook.getMacSettings(savedSetting('finderShortcut', false)).then((settings) => {
+    if (!settings) throw new Error('设置不可用');
+    apply(settings);
+    controls.forEach((control) => { control.disabled = false; });
+  }).catch(() => showMessage('无法读取 macOS 设置。'));
+  finderMode.addEventListener('change', () => {
+    const value = finderMode.value;
+    if (value === 'system' || value === 'shortcut' || value === 'space') void change('finderMode', value);
+  });
+  showDock.addEventListener('change', () => { void change('showDock', showDock.checked); });
+  showMenuBar.addEventListener('change', () => { void change('showMenuBar', showMenuBar.checked); });
+  navigationSetting.addEventListener('change', () => { void change('finderNavigation', navigationSetting.checked); });
+  retry.addEventListener('click', () => window.slowLook.retryFinder());
+  permissions.addEventListener('click', () => window.slowLook.openFinderAccessibility());
+}
 const startupDetail = startupSetting.closest('label')?.querySelector('small');
 const startupDescription = startupDetail?.textContent || '';
 startupSetting.disabled = true;
+let startupBusy = false;
 function applyStartupState(state: { supported: boolean; enabled: boolean; message?: string }): void {
   startupSetting.checked = state.enabled;
   startupSetting.disabled = !state.supported;
   if (startupDetail) startupDetail.textContent = state.message || startupDescription;
 }
-void window.slowLook.getStartup().then(applyStartupState).catch(() => applyStartupState({ supported: false, enabled: false, message: '无法读取开机自启设置。' }));
+async function refreshStartup(): Promise<void> {
+  if (startupBusy) return;
+  startupBusy = true;
+  try { applyStartupState(await window.slowLook.getStartup()); }
+  catch { applyStartupState({ supported: false, enabled: false, message: '无法读取开机自启设置。' }); }
+  finally { startupBusy = false; }
+}
+void refreshStartup();
 startupSetting.addEventListener('change', () => {
+  startupBusy = true;
   startupSetting.disabled = true;
+  const enabled = startupSetting.checked;
   void window.slowLook.setStartup(startupSetting.checked).then(applyStartupState)
-    .catch(() => applyStartupState({ supported: false, enabled: false, message: '无法更改开机自启设置。' }));
+    .catch(() => applyStartupState({ supported: true, enabled: !enabled, message: '无法更改开机自启设置。' }))
+    .finally(() => { startupBusy = false; });
 });
 let pinned = false;
 function syncPin(): void {
@@ -240,27 +318,40 @@ function syncPin(): void {
 }
 syncPin();
 window.slowLook.onPinState((value) => { pinned = value; syncPin(); });
-for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [documentPagesSetting, 'documentPages'], [finderShortcutSetting, 'finderShortcut'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const) {
+const rendererSettings = ([[navigationSetting, 'navigation'], [spaceClosesPreviewSetting, 'spaceClosesPreview'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [documentPagesSetting, 'documentPages'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const)
+  .filter(([, key]) => !isMac || key !== 'navigation');
+function applyRendererSetting(key: typeof rendererSettings[number][1], checked: boolean): void {
+  if (key === 'autoplay') {
+    for (const player of viewerHost.querySelectorAll<HTMLMediaElement>('.media-view audio, .media-view video')) {
+      player.autoplay = checked;
+      if (checked) void player.play().catch(() => undefined);
+    }
+  }
+  if (key === 'folderPreview' || key === 'folderThumbnails') folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
+  if (key === 'markdownToc') setupMarkdownToc();
+  if (key === 'htmlScripts') for (const view of htmlPreviews) view.setScriptsEnabled(checked);
+  if (key === 'documentPages') for (const navigation of pageNavigations) navigation.setEnabled(checked);
+  if (key === 'lineNumbers' || key === 'wrapLines') {
+    refreshLargeText?.();
+    refreshFolderText?.();
+    if (controller) void controller.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
+    for (const nested of nestedControllers) void nested.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
+  }
+}
+for (const [input, key] of rendererSettings) {
+  input.checked = !input.disabled && savedSetting(key, key !== 'wrapLines');
   input.addEventListener('change', () => {
     try { window.localStorage.setItem(`slowlook.${key}`, String(input.checked)); } catch { /* use this session's value */ }
-    if (key === 'autoplay' && input.checked && media) void media.play().catch(() => undefined);
-    if (key === 'finderShortcut' && window.slowLook.platform === 'darwin') window.slowLook.setFinderShortcut(input.checked);
-    if (key === 'folderPreview' || key === 'folderThumbnails') folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
-    if (key === 'markdownToc') setupMarkdownToc();
-    if (key === 'htmlScripts') for (const view of htmlPreviews) view.setScriptsEnabled(input.checked);
-    if (key === 'documentPages') for (const navigation of pageNavigations) navigation.setEnabled(input.checked);
-    if (key === 'lineNumbers' || key === 'wrapLines') {
-      refreshLargeText?.();
-      refreshFolderText?.();
-      if (controller) void controller.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
-      for (const nested of nestedControllers) void nested.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
-    }
+    applyRendererSetting(key, input.checked);
   });
 }
 window.addEventListener('storage', (event) => {
-  if (event.key !== 'slowlook.documentPages') return;
-  documentPagesSetting.checked = event.newValue === null || event.newValue === 'true';
-  for (const navigation of pageNavigations) navigation.setEnabled(documentPagesSetting.checked);
+  const setting = rendererSettings.find(([, key]) => event.key === `slowlook.${key}`);
+  if (!setting) return;
+  const [input, key] = setting;
+  if (input.disabled) return;
+  input.checked = event.newValue === null ? key !== 'wrapLines' : event.newValue === 'true';
+  applyRendererSetting(key, input.checked);
 });
 
 function attachPageNavigation(container: HTMLElement, mount: HTMLElement, filename: string): () => void {
@@ -1163,6 +1254,7 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
 function clearPreview(): void {
   generation += 1;
   isPreviewing = false;
+  finderNavigationAvailable = false;
   openDefaultButton.disabled = true;
   openFeedback.hidden = true;
   currentPreview = undefined;
@@ -1188,6 +1280,7 @@ function clearPreview(): void {
 window.slowLook.onStart((file) => {
   generation += 1;
   isPreviewing = false;
+  finderNavigationAvailable = Boolean(file.finderNavigation);
   openDefaultButton.disabled = true;
   openFeedback.hidden = true;
   currentPreview = undefined;
@@ -1297,6 +1390,7 @@ element('#file-info-close').addEventListener('click', () => { hideFileInfo(); in
 element('#settings-open').addEventListener('click', () => {
   settingsPanel.hidden = false;
   element('[role="tab"][aria-selected="true"]').focus();
+  void refreshStartup();
 });
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')) {
   button.addEventListener('click', () => {
@@ -1324,7 +1418,30 @@ settingsPanel.addEventListener('click', (event) => {
   if (event.target === settingsPanel) settingsPanel.hidden = true;
 });
 
+// Capture Space before a focused button or switch can handle it.
 document.addEventListener('keydown', (event) => {
+  if (!spaceClosesPreviewSetting.checked || preview.hidden || (event.code !== 'Space' && event.key !== ' ') ||
+      event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+  const needsSpace = event.composedPath().some((target) => target instanceof HTMLElement && (
+    target.isContentEditable || ['TEXTAREA', 'SELECT', 'VIDEO', 'AUDIO'].includes(target.tagName) ||
+    (target instanceof HTMLInputElement && !['button', 'checkbox', 'radio', 'reset', 'submit'].includes(target.type)) ||
+    ['textbox', 'combobox', 'slider', 'spinbutton'].includes(target.getAttribute('role') || '')
+  ));
+  if (needsSpace) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (!event.repeat) {
+    settingsPanel.hidden = true;
+    window.slowLook.hide();
+  }
+}, { capture: true });
+
+document.addEventListener('keydown', (event) => {
+  if (isMac && event.metaKey && event.key === ',' && settingsPanel.hidden) {
+    event.preventDefault();
+    element('#settings-open').click();
+    return;
+  }
   if (!settingsPanel.hidden) {
     if (event.key === 'Escape') { event.preventDefault(); settingsPanel.hidden = true; element('#settings-open').focus(); }
     return;
@@ -1347,8 +1464,10 @@ document.addEventListener('keydown', (event) => {
     target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO', 'AUDIO'].includes(target.tagName) ||
     ['textbox', 'slider', 'spinbutton'].includes(target.getAttribute('role') || '') || Boolean(target.closest('.folder-browser'))
   ));
-  if (navigationSetting.checked && isPreviewing && !navigationInteracting && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey &&
-      ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+  const navigatesFile = isMac
+    ? !pinned && finderNavigationAvailable && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    : isPreviewing && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key);
+  if (navigationSetting.checked && navigatesFile && !navigationInteracting && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
     event.preventDefault();
     window.slowLook.navigate(event.key);
     return;

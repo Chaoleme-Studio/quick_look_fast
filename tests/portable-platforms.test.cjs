@@ -11,8 +11,8 @@ test('portable packager keeps numbered versions and assembles each platform', ()
   function write(root, name, content = '') {
     const filename = path.join(root, name); fs.mkdirSync(path.dirname(filename), { recursive: true }); fs.writeFileSync(filename, content);
   }
-  function fixture(platform) {
-    const root = path.join(temp, platform); fs.mkdirSync(root);
+  function fixture(platform, arch = platform === 'darwin' ? 'arm64' : 'x64') {
+    const root = path.join(temp, `${platform}-${arch}`); fs.mkdirSync(root);
     for (const file of ['build/dist/index.html', 'build/dist-electron/main.js', 'docs/readme.md', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY.md', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tests/fixtures/README.md', '.github/workflows/release.yml',
       'patch/patch-flyfish-pptx.cjs', 'patch/patch-flyfish-docx.cjs', 'patch/flyfish-pptx-chart-fix.cjs', 'patch/patch-flyfish-xlsx.cjs', 'patch/flyfish-xlsx-row-fix.cjs',
       'electron/platform/linux/install.cjs', 'electron/platform/linux/install-portable.sh', 'public/branding/app.icns', 'public/branding/app.png',
@@ -27,6 +27,9 @@ test('portable packager keeps numbered versions and assembles each platform', ()
       write(root, 'node_modules/electron/dist/electron_wer.dll', 'crash helper');
       write(root, 'build/native/windows/QuickLookFast.Bridge.exe', 'bridge');
     } else {
+      write(root, 'build/native/macos/QuickLookFast.FinderBridge', 'finder bridge');
+      write(root, 'build/dist/branding/tray-macos.png', 'menu bar image');
+      write(root, 'build/dist/branding/tray-macos@2x.png', 'retina menu bar image');
       write(root, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron', 'runtime');
       write(root, 'node_modules/electron/dist/Electron.app/Contents/Info.plist', 'plist');
       write(root, 'node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper.app/Contents/Info.plist', 'plist');
@@ -35,26 +38,31 @@ test('portable packager keeps numbered versions and assembles each platform', ()
     const edits = [];
     const load = (name) => name === 'node:child_process' ? { execFileSync: (...args) => edits.push(args) } : require(name);
     load.resolve = require.resolve;
-    const run = (version) => vm.runInNewContext(script, { require: load, __dirname: path.join(root, 'scripts'), process: { platform, arch: platform === 'darwin' ? 'arm64' : 'x64', argv: ['node', 'pack', ...(version ? [version] : [])], env: { SLOWLOOK_SKIP_ICON_EMBED: '1' } }, console: { log() {}, error() {} } });
+    const run = (version) => vm.runInNewContext(script, { require: load, __dirname: path.join(root, 'scripts'), process: { platform, arch, argv: ['node', 'pack', ...(version ? [version] : [])], env: { SLOWLOOK_SKIP_ICON_EMBED: '1' } }, console: { log() {}, error() {} } });
     run();
     return { root, edits, run };
   }
   try {
-    const linux = fixture('linux');
-    const linuxOutput = path.join(linux.root, 'build/versions/V1');
-    for (const file of ['quicklook-fast', 'install-integration.sh', 'resources/app/build/dist/index.html',
-      'resources/app/build/dist-electron/platform/linux/install.cjs', 'resources/app/patch/patch-flyfish-docx.cjs',
-      'resources/app/node_modules/dbus-next/package.json', 'resources/app/node_modules/tiny-dep/package.json']) {
-      assert.ok(fs.existsSync(path.join(linuxOutput, file)), `missing Linux file ${file}`);
+    for (const arch of ['x64', 'arm64']) {
+      const linux = fixture('linux', arch);
+      const linuxOutput = path.join(linux.root, 'build/versions/V1');
+      for (const file of ['quicklook-fast', 'install-integration.sh', 'resources/app/build/dist/index.html',
+        'resources/app/build/dist-electron/platform/linux/install.cjs', 'resources/app/patch/patch-flyfish-docx.cjs',
+        'resources/app/node_modules/dbus-next/package.json', 'resources/app/node_modules/tiny-dep/package.json']) {
+        assert.ok(fs.existsSync(path.join(linuxOutput, file)), `missing Linux ${arch} file ${file}`);
+      }
     }
     const mac = fixture('darwin');
     const bundle = path.join(mac.root, 'build/versions/V1/QuickLook Fast.app/Contents');
-    for (const file of ['MacOS/QuickLook Fast', 'Resources/app/build/dist/index.html', 'Resources/app/LICENSE', 'Resources/electron.icns']) {
+    for (const file of ['MacOS/QuickLook Fast', 'Resources/app/build/dist/index.html', 'Resources/app/LICENSE', 'Resources/electron.icns',
+      'MacOS/QuickLookFast.FinderBridge', 'Resources/app/build/dist/branding/tray-macos.png', 'Resources/app/build/dist/branding/tray-macos@2x.png']) {
       assert.ok(fs.existsSync(path.join(bundle, file)), `missing macOS file ${file}`);
     }
     assert.equal(fs.readFileSync(path.join(bundle, 'Resources/electron.icns'), 'utf8'), 'fixture');
     assert.ok(mac.edits.some((call) => call[1][1] === 'Set :CFBundleExecutable "QuickLook Fast"'));
     assert.ok(mac.edits.some((call) => call[1][1] === 'Set :LSMinimumSystemVersion "26.0"'));
+    assert.ok(mac.edits.some((call) => call[1][1] === 'LSUIElement' && call[1][3] === 'YES'));
+    assert.ok(mac.edits.some((call) => call[1][1].includes('NSAppleEventsUsageDescription')));
     assert.ok(mac.edits.some((call) => String(call[1][1]).includes('cn.chaoleme.quicklookfast.electron-helper-app')));
     const windows = fixture('win32');
     const winOutput = path.join(windows.root, 'build/versions/V1');

@@ -4,7 +4,7 @@
 
 QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，通过文件管理器入口快速查看内容；关闭预览后程序继续驻留在系统托盘。项目原名 SlowLook，使用 Electron、TypeScript 和 [Flyfish File Viewer](https://github.com/flyfish-dev/file-viewer) 构建。
 
-当前版本为 **0.2.0**。不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
+当前版本为 **0.3.0**。不同系统的快捷键接入、文件格式和文档还原效果存在差异；支持范围不等于所有文件都已完成实机验证。
 
 ## 目录
 
@@ -56,10 +56,10 @@ QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，�
 | 平台 | 目标环境 | 启动入口 | 当前限制 |
 | --- | --- | --- | --- |
 | Windows | Windows 10/11，x64 | `QuickLook Fast.exe` | Explorer、桌面和 Directory Opus 接入仍需实机验证；发布包未签名。 |
-| macOS | macOS 26 及以上，Apple Silicon / arm64 | `QuickLook Fast.app` | Finder 使用可选组合键；仅临时签名，未进行 Apple 公证。 |
-| Linux | x64，GNOME / KDE Plasma 等 | `./quicklook-fast` | 使用 GNOME 预览服务或 Dolphin/Nemo 菜单，需满足 Electron 系统依赖。 |
+| macOS | macOS 26 及以上，Apple Silicon / arm64 | `QuickLook Fast.app` | Finder 支持可选的 Space 接管或组合键。应用仅临时签名，未进行 Apple 公证。 |
+| Linux | x64 / arm64，GNOME / KDE Plasma 等 | `./quicklook-fast` | 使用 GNOME 预览服务或 Dolphin/Nemo 菜单，需满足 Electron 系统依赖。 |
 
-本地开发构建位于 `build/versions/V1/`、`V2/` 等逐个编号的目录中，编号是**本地构建迭代号**，与软件版本 `0.2.0` 分开。新构建不会覆盖已有编号。
+本地开发构建位于 `build/versions/V1/`、`V2/` 等逐个编号的目录中，编号是**本地构建迭代号**，与软件版本 `0.3.0` 分开。新构建不会覆盖已有编号。
 
 ## 基本操作
 
@@ -122,7 +122,7 @@ Flyfish 3.3.4 上游登记了 275 个扩展名；本项目当前 266 个扩展�
 ## 平台与文件管理器
 
 - **Windows**：Explorer、桌面和 Directory Opus 支持已实现的 Space 入口。与 QuickLook、PowerToys Peek 或 DOpus 自带快捷键同时运行时可能冲突。
-- **macOS**：Finder 使用可选的 `⌘ Shift Space` 实验入口；系统原生 Space 尚未接管，可能需要自动化权限。
+- **macOS**：在“设置 → 系统集成”可选择 Finder 使用系统快速查看、`⌘⇧Space` 或由 QuickLook Fast 接管 `Space`。接管需要辅助功能权限。Dock 与菜单栏图标可分别隐藏。
 - **Linux**：解压后运行 `./install-integration.sh` 安装 Dolphin/Nemo 菜单；增加 `--gnome` 同时安装 GNOME Files 预览服务。Dolphin 26.04 及以上可尝试为服务菜单设置 Space。
 
 切换自旧 QuickLook 或 SlowLook 时，先退出旧程序并关闭其开机启动。旧设置和插件不会自动迁移。系统权限、Wayland/X11、Finder 和 DOpus 双栏等细节见[平台说明](docs/platforms.md)。

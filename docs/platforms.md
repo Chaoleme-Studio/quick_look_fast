@@ -30,7 +30,15 @@ QuickLook Fast 使用 Flyfish/highlight.js；超过 16 MiB 的常见文本读取
 
 ### macOS
 
-只构建 macOS 26 及以上的 Apple Silicon / arm64 包。Finder/桌面目前是可选 `⌘ Shift Space`，使用 Finder 选区，可能需要自动化权限。裸 Space 仍由系统 Quick Look 管理。Dock 隐藏、菜单栏图标、权限撤销、焦点、多选及 arm64 包尚需真实机器验证；分发包仅临时自签名，没有 Apple 公证。
+支持 macOS 26 及以上的 Apple Silicon / arm64 包。在“设置 → 系统集成”中选择 Finder 和桌面的预览快捷键：
+
+- **macOS 快速查看**将空格交给系统处理。
+- **QuickLook Fast · ⌘⇧Space** 通过自动化读取 Finder 选区。首次在 Finder 中使用时允许应用控制 Finder。组合键注册失败会显示状态。
+- **QuickLook Fast · Space** 是新安装的默认选项。授权辅助功能后，应用会自动在 Finder 和桌面接管空格。选中单个项目后按空格打开预览，再按一次收起。若 macOS 首次提示访问桌面资料夹，请允许 QuickLook Fast 读取桌面文件。
+
+可在“系统设置 → 隐私与安全性 → 辅助功能”管理 QuickLook Fast 的权限。已有的快捷键选择会随应用重启恢复。切回“macOS 快速查看”或退出应用即可恢复系统处理。按 ↑ 或 ↓ 会跟随原 Finder 列表或桌面上的选区。可在“设置 → 常规”关闭方向键切换。固定的预览保持在当前文件。
+
+Dock 和菜单栏图标可独立开关。默认隐藏 Dock、显示彩色菜单栏图标。两个图标都隐藏后，可以从 Spotlight 或 Finder 重新打开应用窗口，在窗口中按 ⌘Q 可以完全退出。分发包仅临时签名，登录项是否生效以 macOS 系统设置为准。
 
 ### Linux
 

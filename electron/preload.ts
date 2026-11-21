@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { MacSettings } from './platform/macos-settings';
 
 // Electron also loads preloads in child frames. Only the application shell
 // receives the desktop bridge; local HTML is rendered in isolated iframes.
@@ -28,9 +29,13 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld('slowLook', {
   onPinState: (listener: (pinned: boolean) => void) => ipcRenderer.on('pin-state', (_event, pinned) => listener(pinned)),
   getStartup: () => ipcRenderer.invoke('startup-get'),
   setStartup: (enabled: boolean) => ipcRenderer.invoke('startup-set', enabled),
-  setFinderShortcut: (enabled: boolean) => ipcRenderer.send('set-finder-shortcut', enabled),
+  getMacSettings: (legacyFinderShortcut: boolean) => ipcRenderer.invoke('mac-settings-get', legacyFinderShortcut),
+  setMacSetting: <K extends keyof MacSettings>(key: K, value: MacSettings[K]) => ipcRenderer.invoke('mac-settings-set', key, value),
+  onMacSettings: (listener: (settings: MacSettings) => void) => ipcRenderer.on('mac-settings-changed', (_event, settings) => listener(settings)),
+  retryFinder: () => ipcRenderer.send('finder-retry'),
+  openFinderAccessibility: () => ipcRenderer.send('finder-open-accessibility'),
   metric: (phase: string) => ipcRenderer.send('preview-metric', phase),
-  onStart: (listener: (file: { name: string }) => void) => {
+  onStart: (listener: (file: { name: string; finderNavigation?: boolean }) => void) => {
     ipcRenderer.on('preview-start', (_event, file) => listener(file));
   },
   onPreview: (listener: (file: { url: string; name: string; size: number }) => void) => {

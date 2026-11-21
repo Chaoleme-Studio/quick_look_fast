@@ -118,7 +118,7 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
   const originalStat = fsPromises.stat;
   Module._load = function (request, parent, isMain) {
     if (request === 'electron') return electron;
-    if (request === 'node:child_process') return { spawn: () => fakeBridge };
+    if (request === 'node:child_process') return { ...originalLoad.call(this, request, parent, isMain), spawn: () => fakeBridge };
     return originalLoad.call(this, request, parent, isMain);
   };
 
