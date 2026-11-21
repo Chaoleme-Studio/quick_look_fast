@@ -12,7 +12,8 @@ import { requestPassword } from './ui/password-prompt';
 import { fileInfoDetails, formatSize, showPhotoExif, type PreviewFile } from './ui/file-info';
 import { mountAudioWaveform } from './preview/media/audio-waveform';
 import { mountHtmlPreview, type HtmlPreview, type HtmlPreviewSource } from './preview/web/html-preview';
-import { mountPageNavigation } from './preview/document/page-navigation';
+import { mountPageNavigation, type PageNavigation } from './preview/document/page-navigation';
+import { mountWordOutline } from './preview/document/word-outline';
 import type { ViewerController, ViewerOptions, ViewerState } from '@file-viewer/web-full';
 import type { RendererDefinition } from '@file-viewer/core';
 
@@ -64,6 +65,7 @@ const settingsGroups = [
     { id: 'startup', title: '开机自动启动', detail: '登录后在后台运行，随时按空格预览' },
   ] },
   { id: 'reading', label: '阅读与文本', eyebrow: 'READING', description: '为代码、文本与文档选择舒适的阅读方式', rows: [
+    { id: 'document-pages', title: '显示文档页码和翻页', detail: '在 Word 和 PPT 预览中显示页码、切换和跳转' },
     { id: 'line-numbers', title: '显示行号', detail: '为代码和纯文本显示行号与行数' },
     { id: 'wrap-lines', title: '自动换行', detail: '长行按窗口宽度换行；大文件片段保持横向滚动' },
     { id: 'markdown-toc', title: 'Markdown 目录', detail: '在文档旁显示章节，点击即可跳转' },
@@ -166,12 +168,14 @@ const lineNumbersSetting = element<HTMLInputElement>('#settings-line-numbers');
 const wrapLinesSetting = element<HTMLInputElement>('#settings-wrap-lines');
 const markdownTocSetting = element<HTMLInputElement>('#settings-markdown-toc');
 const htmlScriptsSetting = element<HTMLInputElement>('#settings-html-scripts');
+const documentPagesSetting = element<HTMLInputElement>('#settings-document-pages');
 const finderShortcutSetting = element<HTMLInputElement>('#settings-finder-shortcut');
 const folderPreviewSetting = element<HTMLInputElement>('#settings-folder-preview');
 const folderThumbnailsSetting = element<HTMLInputElement>('#settings-folder-thumbnails');
 const pinButton = element<HTMLButtonElement>('#pin-window');
 let controller: ViewerController | undefined;
 const nestedControllers = new Set<ViewerController>();
+const pageNavigations = new Set<PageNavigation>();
 const htmlPreviews = new Set<HtmlPreview>();
 let removeMainImageWheel: (() => void) | undefined;
 let disposeMainPageNavigation: (() => void) | undefined;
@@ -206,6 +210,7 @@ lineNumbersSetting.checked = savedSetting('lineNumbers');
 wrapLinesSetting.checked = savedSetting('wrapLines', false);
 markdownTocSetting.checked = savedSetting('markdownToc');
 htmlScriptsSetting.checked = savedSetting('htmlScripts');
+documentPagesSetting.checked = savedSetting('documentPages');
 finderShortcutSetting.checked = savedSetting('finderShortcut', false);
 folderPreviewSetting.checked = savedSetting('folderPreview');
 folderThumbnailsSetting.checked = savedSetting('folderThumbnails');
@@ -235,7 +240,7 @@ function syncPin(): void {
 }
 syncPin();
 window.slowLook.onPinState((value) => { pinned = value; syncPin(); });
-for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [finderShortcutSetting, 'finderShortcut'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const) {
+for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [documentPagesSetting, 'documentPages'], [finderShortcutSetting, 'finderShortcut'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails']] as const) {
   input.addEventListener('change', () => {
     try { window.localStorage.setItem(`slowlook.${key}`, String(input.checked)); } catch { /* use this session's value */ }
     if (key === 'autoplay' && input.checked && media) void media.play().catch(() => undefined);
@@ -243,6 +248,7 @@ for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting,
     if (key === 'folderPreview' || key === 'folderThumbnails') folderView?.setOptions({ inlinePreview: folderPreviewSetting.checked, thumbnails: folderThumbnailsSetting.checked });
     if (key === 'markdownToc') setupMarkdownToc();
     if (key === 'htmlScripts') for (const view of htmlPreviews) view.setScriptsEnabled(input.checked);
+    if (key === 'documentPages') for (const navigation of pageNavigations) navigation.setEnabled(input.checked);
     if (key === 'lineNumbers' || key === 'wrapLines') {
       refreshLargeText?.();
       refreshFolderText?.();
@@ -250,6 +256,25 @@ for (const [input, key] of [[navigationSetting, 'navigation'], [autoplaySetting,
       for (const nested of nestedControllers) void nested.update({ options: { locale: 'zh-CN', text: textOptions() } }).catch(() => undefined);
     }
   });
+}
+window.addEventListener('storage', (event) => {
+  if (event.key !== 'slowlook.documentPages') return;
+  documentPagesSetting.checked = event.newValue === null || event.newValue === 'true';
+  for (const navigation of pageNavigations) navigation.setEnabled(documentPagesSetting.checked);
+});
+
+function attachPageNavigation(container: HTMLElement, mount: HTMLElement, filename: string): () => void {
+  const titlebar = container === viewerHost;
+  const section = titlebar ? undefined : container.closest<HTMLElement>('.folder-detail, .zip-content');
+  const heading = section?.querySelector<HTMLElement>(':scope > .folder-detail-heading, :scope > .zip-content-heading');
+  const host = titlebar ? element<HTMLElement>('.window-actions') : heading || container;
+  const navigation = mountPageNavigation(container, mount, filename, { host, before: titlebar ? infoButton : undefined, enabled: documentPagesSetting.checked, titlebar });
+  if (!navigation) return () => undefined;
+  const stopOutline = mountWordOutline(container, mount, filename, {
+    host, before: host.querySelector<HTMLElement>('.document-pages') || (titlebar ? infoButton : undefined), titlebar, initiallyExpanded: titlebar,
+  });
+  pageNavigations.add(navigation);
+  return () => { stopOutline?.(); pageNavigations.delete(navigation); navigation.dispose(); };
 }
 document.querySelectorAll<HTMLButtonElement>('[data-external-link]').forEach((button) => button.addEventListener('click', () => {
   const destination = button.dataset.externalLink;
@@ -759,7 +784,7 @@ async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, sig
   try {
     await nested.load({ file: new File([blob], name), filename: name, size: blob.size });
     if (signal.aborted) { dispose(); return undefined; }
-    stopPages = mountPageNavigation(target, mount, name);
+    stopPages = attachPageNavigation(target, mount, name);
     if (isImageFile(name)) stopImageSize = showNestedImageDimensions(target, mount, { name, size: blob.size, blob }, signal);
     return () => { signal.removeEventListener('abort', dispose); dispose(); };
   } catch (error) {
@@ -947,7 +972,7 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
     await nested.load({ url: file.url, filename, size: file.size });
     if (signal.aborted) cleanup();
     else {
-      stopPages = mountPageNavigation(target, mount, filename);
+      stopPages = attachPageNavigation(target, mount, filename);
       if (/\.(?:md|markdown)$/i.test(filename)) loadMarkdownImages(mount, file.url, () => !signal.aborted);
       else if (isImageFile(filename)) stopImageSize = showNestedImageDimensions(target, mount, file, signal);
     }
@@ -1109,7 +1134,7 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
       const pageMount = viewerHost.querySelector<HTMLElement>('.viewer-root');
       if (pageMount) {
         disposeMainPageNavigation?.();
-        disposeMainPageNavigation = mountPageNavigation(viewerHost, pageMount, viewerFilename);
+        disposeMainPageNavigation = attachPageNavigation(viewerHost, pageMount, viewerFilename);
       }
       if (isImageFile(viewerFilename) && !/\.svg$/i.test(viewerFilename)) {
         const mount = viewerHost.querySelector<HTMLElement>('.viewer-root');

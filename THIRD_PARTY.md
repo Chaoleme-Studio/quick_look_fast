@@ -50,6 +50,7 @@ Flyfish Full 包包含的字体、PDF、文档、CAD、设计及 WebAssembly 资
 | PPTX 分组文字、竖排、形状几何、渐变、箭头、渐进样式及图表轴和颜色解析 | [patch-flyfish-pptx.cjs](patch/patch-flyfish-pptx.cjs) |
 | PPTX 图表标签、轴顺序、刻度密度与数据标签位置 | [flyfish-pptx-chart-fix.cjs](patch/flyfish-pptx-chart-fix.cjs) |
 | DOCX Worker 对本地 JSZip 资源的协议校验 | [patch-flyfish-docx.cjs](patch/patch-flyfish-docx.cjs) |
+| DOCX 将渲染器识别的标题层级提供给文档导航 | [flyfish-docx-outline.cjs](patch/flyfish-docx-outline.cjs) |
 | XLSX 行高、合并单元格和 Worker 行高处理 | [flyfish-xlsx-row-fix.cjs](patch/flyfish-xlsx-row-fix.cjs)、[patch-flyfish-xlsx.cjs](patch/patch-flyfish-xlsx.cjs) |
 
 ## 参考项目与素材

@@ -1,49 +1,63 @@
 type PageKind = 'presentation' | 'word';
 
+export interface PageNavigation {
+  setEnabled(enabled: boolean): void;
+  dispose(): void;
+}
+
 function pageKind(filename: string): PageKind | undefined {
   if (/\.(?:pptx|pptm|potx|potm|ppsx|ppsm)$/i.test(filename)) return 'presentation';
   if (/\.(?:docx|docm|dotx|dotm)$/i.test(filename)) return 'word';
   return undefined;
 }
 
-/** Add page controls to a Flyfish viewer without changing its own toolbar. */
-export function mountPageNavigation(container: HTMLElement, viewer: HTMLElement, filename: string): () => void {
+/** Add page controls beside the title belonging to this Flyfish viewer. */
+export function mountPageNavigation(
+  container: HTMLElement, viewer: HTMLElement, filename: string,
+  options: { host?: HTMLElement; before?: HTMLElement; enabled?: boolean; titlebar?: boolean } = {},
+): PageNavigation | undefined {
   const kind = pageKind(filename);
   const root = viewer.shadowRoot;
   const view = viewer.ownerDocument.defaultView;
-  if (!kind || !root || !view) return () => undefined;
+  if (!kind || !root || !view) return undefined;
 
+  const host = options.host || container;
   const nav = viewer.ownerDocument.createElement('nav');
-  nav.className = 'document-pages';
+  nav.className = `document-pages${options.titlebar ? ' document-pages--titlebar' : ''}`;
   nav.setAttribute('aria-label', '文档翻页');
   nav.hidden = true;
-  nav.innerHTML = `<button type="button" class="document-pages-previous" aria-label="上一页" title="上一页">‹</button>
-    <span class="document-pages-label">第</span><input class="document-pages-input" type="text" inputmode="numeric" aria-label="跳转到页码" autocomplete="off" spellcheck="false">
-    <span class="document-pages-total"></span><button type="button" class="document-pages-next" aria-label="下一页" title="下一页">›</button>`;
+  nav.innerHTML = `<button type="button" class="document-pages-previous" aria-label="上一页" title="上一页"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9.5 3.5-4 4.5 4 4.5"/></svg></button>
+    <span class="document-pages-count"><input class="document-pages-input" type="text" inputmode="numeric" aria-label="跳转到页码" title="点击输入页码，按 Enter 跳转" autocomplete="off" spellcheck="false"><span class="document-pages-separator">/</span><span class="document-pages-total"></span><span class="document-pages-unit">页</span></span>
+    <button type="button" class="document-pages-next" aria-label="下一页" title="下一页"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6.5 3.5 4 4.5-4 4.5"/></svg></button>`;
   const previous = nav.querySelector<HTMLButtonElement>('.document-pages-previous')!;
   const next = nav.querySelector<HTMLButtonElement>('.document-pages-next')!;
   const input = nav.querySelector<HTMLInputElement>('.document-pages-input')!;
   const total = nav.querySelector<HTMLElement>('.document-pages-total')!;
   if (kind === 'word') nav.title = '页数按当前预览排版计算，可能与 Word 略有差异';
-  container.append(nav);
+  if (options.before?.parentElement === host) host.insertBefore(nav, options.before);
+  else host.append(nav);
 
   let pages: HTMLElement[] = [];
   let scroller: HTMLElement | undefined;
   let current = 1;
   let disposed = false;
+  let enabled = options.enabled !== false;
+  let ready = false;
   let frame = 0;
   let refreshNeeded = true;
 
   function show(visible: boolean): void {
-    nav.hidden = !visible;
-    container.classList.toggle('has-document-pages', visible);
+    ready = visible;
+    nav.hidden = !(enabled && ready);
+    host.classList.toggle('has-document-pages', enabled && ready);
   }
 
   function updateControls(): void {
     current = Math.min(Math.max(current, 1), Math.max(pages.length, 1));
     if (viewer.ownerDocument.activeElement !== input) input.value = String(current);
     input.setAttribute('aria-label', `跳转到页码，共 ${pages.length} 页`);
-    total.textContent = `/ ${pages.length} 页`;
+    total.textContent = String(pages.length);
+    input.style.width = `${Math.max(2, String(pages.length).length)}ch`;
     previous.disabled = current <= 1;
     next.disabled = current >= pages.length;
   }
@@ -143,14 +157,21 @@ export function mountPageNavigation(container: HTMLElement, viewer: HTMLElement,
   resized?.observe(viewer);
   view.addEventListener('resize', onScroll);
   schedule(true);
-  return () => {
-    disposed = true;
-    if (frame) view.cancelAnimationFrame(frame);
-    observer.disconnect();
-    resized?.disconnect();
-    view.removeEventListener('resize', onScroll);
-    scroller?.removeEventListener('scroll', onScroll);
-    container.classList.remove('has-document-pages');
-    nav.remove();
+  return {
+    setEnabled(value): void {
+      enabled = value;
+      show(ready);
+      if (enabled) schedule(true);
+    },
+    dispose(): void {
+      disposed = true;
+      if (frame) view.cancelAnimationFrame(frame);
+      observer.disconnect();
+      resized?.disconnect();
+      view.removeEventListener('resize', onScroll);
+      scroller?.removeEventListener('scroll', onScroll);
+      host.classList.remove('has-document-pages');
+      nav.remove();
+    },
   };
 }

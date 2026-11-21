@@ -70,7 +70,7 @@ QuickLook Fast 是离线优先的桌面文件预览工具。选中文件后，�
 
 顶部“使用默认应用打开”会用系统关联的应用打开当前文件，旁边的文件夹图标可选择其他文件进行预览。图片放大到超出窗口后，可按住鼠标左键拖动查看。
 
-Word OpenXML 和 PPTX 预览底部可查看当前页及总页数，点击左右按钮翻页，或输入页码后按 Enter 跳转；滚动时页码会自动更新。Word 页数由当前预览排版计算，可能与 Microsoft Word 不同。PDF 使用其自带的分页工具栏。
+Word OpenXML 和 PPTX 预览的标题栏右侧可查看当前页及总页数，点击左右按钮翻页，或输入页码后按 Enter 跳转；滚动时页码会自动更新。可在“设置 → 阅读与文本”关闭页码控件。Word 左侧文档导航按文档的标题样式列出章节，可点击跳转，也可用顶部目录图标收起或展开；未设置标题样式时不会生成目录。Word 页数由当前预览排版计算，可能与 Microsoft Word 不同。PDF 使用其自带的分页工具栏。
 
 也可以从窗口选择文件、拖放文件，或向程序传入完整路径。在“设置 → 关于”可手动检查 Release 更新；下载和替换需要自行完成。
 
@@ -155,7 +155,7 @@ flowchart LR
 | --- | --- |
 | [PPTX Worker](patch/patch-flyfish-pptx.cjs) | 修正组合文字、形状、渐变、箭头和图表元数据，并逐步发送页面样式。 |
 | [PPTX 图表](patch/flyfish-pptx-chart-fix.cjs) | 调整坐标轴、刻度、图表标签和数据标签位置。 |
-| [DOCX Worker](patch/patch-flyfish-docx.cjs) | 允许打包后的本地应用协议加载随程序提供的 JSZip 资源。 |
+| [DOCX Worker](patch/patch-flyfish-docx.cjs)、[文档导航](patch/flyfish-docx-outline.cjs) | 允许本地应用协议加载随程序提供的 JSZip，并提供引擎识别的标题层级供侧栏使用。 |
 | [XLSX Worker](patch/patch-flyfish-xlsx.cjs) 与 [行高处理](patch/flyfish-xlsx-row-fix.cjs) | 修正自动行高、合并单元格及 Worker 行高计算。 |
 
 补丁原理、已验证页面和仍有限制的场景见[兼容性说明](docs/compatibility.md)，第三方组件及许可见[第三方说明](THIRD_PARTY.md)。

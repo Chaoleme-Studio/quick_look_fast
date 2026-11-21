@@ -416,6 +416,17 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
         assert.ok(root.querySelector('.docx'), 'Word document markup should be present');
         assert.ok(root.querySelector('.docx table'), 'Word tables should be present');
         assert.ok(root.querySelector('style')?.textContent, 'Word formatting stylesheet should be present');
+        if (useBundle) {
+          // Happy DOM cannot reproduce Word's visual layout; actual headings and
+          // scrolling are also checked in a Chromium/Electron window.
+          for (let attempt = 0; attempt < 300 && !window.document.querySelector('.word-outline'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+          const outline = window.document.querySelector('.word-outline');
+          assert.ok(outline, 'the packaged Word renderer mounts its navigation');
+          assert.equal(outline.hidden, false, 'the Word navigation is visible on opening');
+          const toggle = window.document.querySelector('.window-actions .word-outline-toggle');
+          toggle.click(); assert.equal(outline.hidden, true);
+          toggle.click(); assert.equal(outline.hidden, false);
+        }
       } else if (format === 'xlsx') {
         for (let attempt = 0; attempt < 200 && (!/701\s*行，16\s*列/.test(root.textContent) ||
           !canvasCalls.some((call) => call.method === 'fillText') || !canvasCalls.some((call) => call.method === 'fillRect')); attempt += 1) {
@@ -434,6 +445,18 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
         assert.ok(content.querySelector('.slide'), 'PPT slide markup should be present');
         assert.ok(content.querySelector('img[src^="data:image/"]'), 'PPT embedded images should survive sanitization');
         assert.ok(content.querySelector('svg'), 'PPT shapes should survive sanitization');
+        for (let attempt = 0; attempt < 150 && !window.document.querySelector('.window-actions .document-pages'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+        const pageControls = window.document.querySelector('.window-actions .document-pages');
+        const pageSetting = window.document.querySelector('#settings-document-pages');
+        assert.ok(pageControls, 'PPT page controls belong in the title bar');
+        assert.equal(pageControls.nextElementSibling?.id, 'file-info-open', 'page controls are beside the information button');
+        assert.equal(pageSetting.checked, true, 'page controls are enabled by default');
+        pageSetting.checked = false; pageSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+        assert.equal(pageControls.hidden, true, 'the setting hides page controls immediately');
+        assert.equal(window.localStorage.getItem('slowlook.documentPages'), 'false');
+        pageSetting.checked = true; pageSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
+        assert.equal(window.localStorage.getItem('slowlook.documentPages'), 'true');
+        assert.equal(root.querySelector('.flyfish-pptx-content'), content, 'changing the setting does not reload the document');
       }
       if (format === 'docx' || format === 'pptx') {
         const form = root.querySelector('.file-viewer-web-search');
@@ -489,6 +512,14 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     window.document.querySelector('.zip-content-body .password-card').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
     for (let attempt = 0; attempt < 500 && !window.document.querySelector('.zip-child-viewer .viewer-root')?.shadowRoot?.querySelector('.docx'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.ok(window.document.querySelector('.zip-child-viewer .viewer-root')?.shadowRoot?.querySelector('.docx'), 'decrypted DOCX inside ZIP reaches the renderer');
+    if (useBundle) {
+      for (let attempt = 0; attempt < 300 && !window.document.querySelector('.zip-child-viewer .word-outline'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+      const outline = window.document.querySelector('.zip-child-viewer .word-outline');
+      assert.ok(outline, 'nested encrypted Word mounts its navigation');
+      assert.equal(outline.hidden, true, 'nested Word navigation starts collapsed');
+      window.document.querySelector('.zip-content-heading .word-outline-toggle').click();
+      assert.equal(outline.hidden, false);
+    }
     const binaryPath = path.join(directory, 'opaque.bin');
     const binary = Buffer.from([0x00, 0x01, 0x41, 0xff]);
     await writeFile(binaryPath, binary);
