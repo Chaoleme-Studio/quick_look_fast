@@ -22,4 +22,4 @@ Windows 本地打包使用 `pnpm run dist:win`。结果依次放在 `build/versi
 
 安装依赖和 Electron 后，在有图形桌面的环境运行 `pnpm run build` 和 `pnpm run screenshots`。脚本打开实际预览界面，更新 `docs/screenshots/` 的五张图片以及根 README 中 `screenshots:start` 和 `screenshots:end` 标记之间的截图区域。跨平台文件夹截图展示放在标记之外，不会被脚本覆盖。
 
-文件夹和 PDF 使用合成示例，PPTX 使用公开测试样本，应用图标来自用户提供的素材。原有五张截图来自 GitHub Windows 构建打开的 Electron 窗口；macOS 图片采集自本机应用。Linux 文件夹图采集自 Ubuntu 独立 Xvfb 会话中运行的 Linux Electron 窗口，使用合成目录，展示的是应用窗口内容，不含窗口管理器边框。Word 和 Excel 截图基于公开演示或项目合成的示例数据。提交截图时请保留 README 中的相对路径；可使用无损压缩减小 PNG 体积。
+文件夹和 PDF 使用合成示例，PPTX 使用公开测试样本，应用图标来自用户提供的素材。原有五张截图来自 GitHub Windows 构建打开的 Electron 窗口；macOS 图片采集自本机应用。Linux 文件夹图采集自 Ubuntu 独立 Xvfb 会话中运行的 Linux Electron 窗口，使用合成目录，展示的是应用窗口内容，不含窗口管理器边框。Word 和 Excel 截图基于公开演示或项目合成的示例数据。三维截图采用自制建筑群白模以及 [Innerscene 的 CC0 近似建筑模型](https://www.innerscene.com/tools/library/3d-parts/empire-state-building-approximate-model-1-1000-tabletop-7e96c2b1)。提交截图时请保留 README 中的相对路径；可使用无损压缩减小 PNG 体积。

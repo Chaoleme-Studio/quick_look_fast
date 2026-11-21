@@ -51,6 +51,16 @@ Word、Excel 等文档也可以直接在文件夹内选择预览：
 
 [![嵌套 ZIP 与 Word 文档预览](docs/screenshots/archive-nested.png)](docs/screenshots/archive-nested.png)
 
+三维模型可以直接预览、拖动旋转和缩放。下面分别是自制的建筑群白模，以及公开的建筑模型：
+
+| 建筑群白模（GLB） | 建筑模型（GLB） |
+| --- | --- |
+| [![建筑群白模预览](docs/screenshots/3d-massing.png)](docs/screenshots/3d-massing.png) | [![建筑模型预览](docs/screenshots/3d-building.png)](docs/screenshots/3d-building.png) |
+
+右图模型由 [Innerscene](https://www.innerscene.com/tools/library/3d-parts/empire-state-building-approximate-model-1-1000-tabletop-7e96c2b1) 提供，采用 CC0 授权，为近似展示模型。单文件 GLB、OBJ 和 STL 已用样本验证；依赖外部文件的 glTF 和 OBJ 材质目前有局限，详见[格式说明](docs/formats.md#三维模型与-cad-图纸的实测边界)。
+
+CAD 图纸可尝试查看轮廓与部分内容；本次测试的 DWG/DXF 中，部分尺寸标注、填充和图层未完整显示，请使用原始 CAD 软件核对图纸。
+
 以下 Windows 图片使用合成文件夹、合成 PDF 与公开 PPTX 示例。来源与重建方法见[打包与发布](docs/releasing.md#重建文档截图)。
 
 <!-- screenshots:start -->
