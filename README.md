@@ -103,7 +103,7 @@ CAD 图纸可尝试查看轮廓与部分内容；本次测试的 DWG/DXF 中，�
 
 1. 启动程序；在 Windows 中，程序会在系统托盘常驻。
 2. 在已接入的文件管理器中选中文件，按 **Space** 打开预览；再按 Space 或 **Esc** 收起。Linux Dolphin 需要先安装菜单并设置快捷键，见 [Linux 接入说明](docs/platforms.md#linux)。
-3. 在支持选区跟随的文件管理器中使用方向键；点击图钉固定当前窗口，可以继续预览其他文件。Dolphin 当前需要先关闭预览、选择另一个文件后重新打开。
+3. 在支持选区跟随的文件管理器中使用方向键；点击图钉保留当前窗口，可以继续预览其他文件。旁边的置顶按钮独立控制窗口层级。Dolphin 当前需要先关闭预览、选择另一个文件后重新打开。
 4. 关闭预览窗口只会隐藏窗口；从托盘或菜单栏选择“退出”可结束程序。macOS 若隐藏了两个图标，可通过 Spotlight 重新打开应用窗口，再按 ⌘Q 退出。
 
 顶部“使用默认应用打开”会用系统关联的应用打开当前文件，旁边的文件夹图标可选择其他文件进行预览。图片放大到超出窗口后，可按住鼠标左键拖动查看。
@@ -260,7 +260,7 @@ pnpm run dist:win
 
 - [使用指南](docs/user-guide.md) · [完整格式清单](docs/formats.md) · [架构与性能](docs/architecture.md) · [兼容性](docs/compatibility.md)
 - [平台接入](docs/platforms.md) · [需求与验证](docs/requirements-and-verification.md) · [打包发布](docs/releasing.md)
-- [参考项目](docs/references.md) · [固定预览方案（待确认）](docs/pinned-preview-proposal.md) · [第三方组件和许可](THIRD_PARTY.md)
+- [参考项目](docs/references.md) · [固定预览方案](docs/pinned-preview-proposal.md) · [第三方组件和许可](THIRD_PARTY.md)
 
 本项目自有代码采用 [Apache-2.0](LICENSE)。第三方组件分别适用各自许可证；Flyfish 的部分 CAD 运行时包含 AGPL/GPL 组件，详情及对应源码位置见[第三方说明](THIRD_PARTY.md)。感谢 Flyfish 团队及所有开源贡献者。
 

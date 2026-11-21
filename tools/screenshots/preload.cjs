@@ -9,7 +9,7 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld('slowLook', {
   checkForUpdates: async () => { const version = await ipcRenderer.invoke('capture-app-version'); return { state: 'up-to-date', currentVersion: version, latestVersion: version }; },
   resolveMarkdownImage: async () => undefined,
   contentTask: async () => ({ ok: false, code: 'failed', message: '演示文件不需要解密。' }), cancelContent: () => {}, focusPreview: () => {},
-  setAlwaysOnTop: () => {}, setPinned: () => {}, onPinState: () => {}, setFinderShortcut: () => {}, metric: () => {},
+  setAlwaysOnTop: () => {}, onTopmostState: () => {}, setPinned: () => {}, onPinState: () => {}, setFinderShortcut: () => {}, metric: () => {},
   getStartup: async () => ({ supported: true, enabled: false }), setStartup: async (enabled) => ({ supported: true, enabled }),
   onStart: (listener) => ipcRenderer.on('capture-start', (_event, value) => listener(value)),
   onPreview: (listener) => ipcRenderer.on('capture-preview', (_event, value) => listener(value)),

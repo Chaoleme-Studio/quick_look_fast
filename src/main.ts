@@ -36,11 +36,13 @@ declare global {
       hide(): void;
       navigate(key: string): void;
       setPinned(enabled: boolean): void;
+      setAlwaysOnTop(enabled: boolean): void;
       openProjectLink(destination: 'organization' | 'flyfish' | 'releases'): void;
       appVersion(): Promise<string>;
       openDiagnostics(): Promise<{ ok: boolean; message?: string }>;
       checkForUpdates(): Promise<{ state: 'available' | 'up-to-date'; currentVersion: string; latestVersion: string } | { state: 'error'; currentVersion: string; message: string }>;
       onPinState(listener: (pinned: boolean) => void): void;
+      onTopmostState(listener: (enabled: boolean) => void): void;
       getStartup(): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
       setStartup(enabled: boolean): Promise<{ supported: boolean; enabled: boolean; message?: string }>;
       getMacSettings(legacyFinderShortcut: boolean): Promise<MacSettings | undefined>;
@@ -119,6 +121,7 @@ app.innerHTML = `
       <div class="window-actions">
         <button class="icon-action" id="file-info-open" type="button" aria-label="文件信息" title="文件信息" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v4m0-7h.01"/></svg></button>
         <button class="icon-action pin-action" id="pin-window" type="button" aria-label="固定此预览" aria-pressed="false" title="固定此预览"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3.5h6l-.6 4 2.6 2.8v1.2H5v-1.2l2.6-2.8L7 3.5Zm3 8v5"/></svg></button>
+        <button class="icon-action topmost-action" id="topmost-window" type="button" aria-label="置顶此窗口" aria-pressed="false" title="置顶此窗口"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="7" width="14" height="9" rx="1.5"/><path d="M10 12V3m-3 3 3-3 3 3"/></svg></button>
         <button class="open-action" id="open-default" type="button" title="使用系统默认应用打开当前文件或文件夹" disabled>使用默认应用打开</button>
         <button class="icon-action" id="choose" type="button" aria-label="选择文件预览" title="选择文件预览 (Ctrl/⌘+O)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h5l1.5 2h8.5v7.5H2.5z"/><path d="M10 9.5v4m-2-2h4"/></svg></button>
         <button class="open-action" id="settings-open" type="button" title="设置">设置</button>
@@ -204,6 +207,7 @@ const folderPreviewSetting = element<HTMLInputElement>('#settings-folder-preview
 const folderThumbnailsSetting = element<HTMLInputElement>('#settings-folder-thumbnails');
 const hideMacMetadataSetting = element<HTMLInputElement>('#settings-hide-mac-metadata');
 const pinButton = element<HTMLButtonElement>('#pin-window');
+const topmostButton = element<HTMLButtonElement>('#topmost-window');
 let controller: ViewerController | undefined;
 const nestedControllers = new Set<ViewerController>();
 const pageNavigations = new Set<PageNavigation>();
@@ -317,11 +321,19 @@ startupSetting.addEventListener('change', () => {
 let pinned = false;
 function syncPin(): void {
   pinButton.setAttribute('aria-pressed', String(pinned));
-  pinButton.setAttribute('aria-label', pinned ? '取消固定并取消置顶' : '固定并置顶此预览');
-  pinButton.title = pinned ? '取消固定并取消置顶' : '固定并置顶此预览，继续查看其他文件';
+  pinButton.setAttribute('aria-label', pinned ? '取消固定此预览' : '固定此预览');
+  pinButton.title = pinned ? '取消固定此预览' : '固定此预览，继续查看其他文件';
 }
 syncPin();
 window.slowLook.onPinState((value) => { pinned = value; syncPin(); });
+let alwaysOnTop = false;
+function syncTopmost(): void {
+  topmostButton.setAttribute('aria-pressed', String(alwaysOnTop));
+  topmostButton.setAttribute('aria-label', alwaysOnTop ? '取消置顶此窗口' : '置顶此窗口');
+  topmostButton.title = alwaysOnTop ? '取消置顶此窗口' : '置顶此窗口';
+}
+syncTopmost();
+window.slowLook.onTopmostState((value) => { alwaysOnTop = value; syncTopmost(); });
 const rendererSettings = ([[navigationSetting, 'navigation'], [spaceClosesPreviewSetting, 'spaceClosesPreview'], [autoplaySetting, 'autoplay'], [lineNumbersSetting, 'lineNumbers'], [wrapLinesSetting, 'wrapLines'], [markdownTocSetting, 'markdownToc'], [htmlScriptsSetting, 'htmlScripts'], [documentPagesSetting, 'documentPages'], [folderPreviewSetting, 'folderPreview'], [folderThumbnailsSetting, 'folderThumbnails'], [hideMacMetadataSetting, 'hideMacMetadata']] as const)
   .filter(([, key]) => !isMac || key !== 'navigation');
 function applyRendererSetting(key: typeof rendererSettings[number][1], checked: boolean): void {
@@ -404,6 +416,9 @@ element<HTMLButtonElement>('#open-diagnostics').addEventListener('click', async 
 });
 pinButton.addEventListener('click', () => {
   window.slowLook.setPinned(!pinned);
+});
+topmostButton.addEventListener('click', () => {
+  window.slowLook.setAlwaysOnTop(!alwaysOnTop);
 });
 
 function textOptions(): NonNullable<ViewerOptions['text']> {

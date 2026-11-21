@@ -4,7 +4,7 @@
 
 Windows 桥接进程使用低级键盘钩子识别 Space，并在文件列表上下文中读取选区。Explorer 和桌面走 Shell；Directory Opus 使用 `DOpus.ParentWindow` / `WM_COPYDATA` 请求 XML，消息窗口逐次创建，校验返回的 Lister 与文件路径。不可用时尝试 DOpusRT。
 
-对照 QL-Win QuickLook 的 `WindowHelper.BringToFront`：普通预览在不激活的条件下短暂提升并恢复普通层级。QuickLook Fast 的 Windows 桥接对自身窗口使用同类 Win32 层级操作，图钉才保持置顶；系统焦点、管理员权限差异和真实 DOpus 桌面仍需验证。
+对照 QL-Win QuickLook 的 `WindowHelper.BringToFront`：普通预览在不激活的条件下短暂提升并恢复普通层级。QuickLook Fast 的 Windows 桥接对自身窗口使用同类 Win32 层级操作；固定和置顶分别控制，只有用户单独开启置顶的窗口保持置顶。系统焦点、管理员权限差异和真实 DOpus 桌面仍需验证。
 
 DOpus 的 `listsel` 默认针对当前源标签。双栏快速点击后源状态可能滞后，因此先请求 `paths`，根据焦点或最近点击的文件列表匹配目标 Lister 中的可见标签，再指定标签请求选区；无法定位时回退源标签。快速点击后按 Space，后台最多等到点击后 70 ms，给选择状态时间更新。查询不会有意选用其他 Lister 的文件。
 

@@ -82,13 +82,14 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       metric: (value) => metrics.push(value),
       hide: () => { hiddenPreviews += 1; },
       navigate: (key) => navigations.push(key),
-      setAlwaysOnTop: (enabled) => topmost.push(enabled),
+      setAlwaysOnTop: (enabled) => { topmost.push(enabled); callbacks.topmostState(enabled); },
       setPinned: (enabled) => { pins.push(enabled); callbacks.pinState(enabled); },
       openProjectLink: (destination) => { callbacks.openedLink = destination; },
       appVersion: async () => '0.1.2',
       openDiagnostics: async () => { callbacks.openedDiagnostics = true; return { ok: true }; },
       checkForUpdates: () => { updateRequests += 1; return updateResponse(); },
       onPinState: (callback) => { callbacks.pinState = callback; },
+      onTopmostState: (callback) => { callbacks.topmostState = callback; },
       getStartup: async () => ({ supported: true, enabled: false }),
       setStartup: async (enabled) => ({ supported: true, enabled }),
       setFinderShortcut: () => {},
@@ -293,14 +294,22 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     assert.equal(startupSetting.checked, true, 'the startup setting follows the system response');
     callbacks.integrationStatus('DOpus：未读取到选中项');
     assert.equal(window.document.querySelector('#integration-current-status').textContent, 'DOpus：未读取到选中项');
-    assert.equal(window.document.querySelector('#settings-always-on-top'), null, 'pinning is the only topmost control');
+    assert.equal(window.document.querySelector('#settings-always-on-top'), null, 'topmost belongs to each window rather than a global setting');
     navigationSetting.checked = false;
     navigationSetting.dispatchEvent(new window.Event('change', { bubbles: true }));
     window.document.querySelector('#settings-close').click();
     window.document.querySelector('#pin-window').click();
     assert.deepEqual(pins, [true], 'pin button should fix this preview');
     assert.equal(window.document.querySelector('#pin-window').getAttribute('aria-pressed'), 'true');
-    assert.deepEqual(topmost, [], 'topmost state is managed with the pinned window in the main process');
+    assert.deepEqual(topmost, [], 'pinning does not change topmost state');
+    window.document.querySelector('#topmost-window').click();
+    assert.deepEqual(topmost, [true], 'the separate topmost button raises this window');
+    assert.equal(window.document.querySelector('#topmost-window').getAttribute('aria-pressed'), 'true');
+    window.document.querySelector('#pin-window').click();
+    assert.deepEqual(pins, [true, false], 'unpinning affects only the pin');
+    assert.equal(window.document.querySelector('#topmost-window').getAttribute('aria-pressed'), 'true');
+    window.document.querySelector('#topmost-window').click();
+    assert.deepEqual(topmost, [true, false]);
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     assert.deepEqual(navigations, ['ArrowDown'], 'disabled navigation should not forward the key');
     assert.equal(window.localStorage.getItem('slowlook.navigation'), 'false');

@@ -17,6 +17,7 @@ import { recordDiagnostic } from './support/diagnostics';
 import { enableLocalCrashReports } from './support/crash-reporting';
 import { resolveMarkdownImage } from './files/markdown-images';
 import { linuxPreviewWindowGeometry } from './platform/linux/window-sizing';
+import { nextPreviewWindowGeometry } from './platform/preview-window-geometry';
 import type { Server } from 'node:http';
 import type { LinuxPreviewer } from './platform/linux/previewer';
 
@@ -43,6 +44,7 @@ interface PreviewContext {
   ready: boolean;
   pending: Array<{ channel: string; payload?: unknown }>;
   pinned: boolean;
+  alwaysOnTop: boolean;
   disposed: boolean;
   contentWorker?: Worker;
   rendererFailures: number[];
@@ -113,14 +115,14 @@ function syncNativeTopmost(ctx: PreviewContext): void {
   if (process.platform !== 'win32' || !bridge?.stdin.writable || ctx.disposed || ctx.window.isDestroyed()) return;
   const handle = ctx.window.getNativeWindowHandle();
   const value = handle.length >= 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE());
-  writeBridge({ type: 'pin', handle: value, enabled: ctx.pinned });
+  writeBridge({ type: 'pin', handle: value, enabled: ctx.alwaysOnTop });
 }
 
 function raiseWithoutActivation(ctx: PreviewContext): void {
   if (process.platform !== 'win32' || !bridge?.stdin.writable || ctx.disposed || ctx.window.isDestroyed()) return;
   const handle = ctx.window.getNativeWindowHandle();
   const value = handle.length >= 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE());
-  writeBridge({ type: 'raise', handle: value, enabled: ctx.pinned });
+  writeBridge({ type: 'raise', handle: value, enabled: ctx.alwaysOnTop });
 }
 
 function showWindow(ctx: PreviewContext, focus = true): void {
@@ -133,7 +135,9 @@ function showWindow(ctx: PreviewContext, focus = true): void {
     // Also raise a visible preview that was covered by another window, while
     // keeping keyboard focus in the file manager for the next Space press.
     ctx.window.showInactive();
-    raiseWithoutActivation(ctx);
+    // On macOS showInactive already calls orderFrontRegardless. moveTop uses
+    // ordinary window ordering and can put the preview behind the active Finder.
+    if (process.platform === 'win32') raiseWithoutActivation(ctx);
   }
   trace(ctx, 'window-show-requested');
 }
@@ -169,14 +173,14 @@ function destroyWindow(ctx: PreviewContext): void {
   contexts.delete(ctx.window.webContents);
   if (active === ctx) {
     active = undefined;
-    if (finderSourceId) forgetSource();
+    forgetSource();
   }
   if (!ctx.window.isDestroyed()) ctx.window.destroy();
 }
 
 function hideWindow(ctx: PreviewContext): void {
   if (ctx.disposed) return;
-  if (ctx.pinned) { destroyWindow(ctx); return; }
+  if (ctx.pinned || ctx !== active) { destroyWindow(ctx); return; }
   const restoreSourceFocus = ctx.window.isFocused();
   invalidate(ctx);
   send(ctx, 'clear-preview');
@@ -192,6 +196,10 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
     width: 1080, height: 760, minWidth: 640, minHeight: 480,
     ...(previousBounds ? { x: previousBounds.x + 36, y: previousBounds.y + 36 } : {}),
   };
+  if (!isLinux && previousBounds) {
+    try { windowGeometry = nextPreviewWindowGeometry(screen.getDisplayMatching(previousBounds).workArea, previousBounds); }
+    catch { /* Keep the default geometry if the display is changing. */ }
+  }
   if (isLinux) {
     // Wayland does not expose the global pointer or window coordinates. Let
     // its compositor place the window, and use the primary display's work area.
@@ -216,7 +224,7 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
   });
   const ctx: PreviewContext = {
     window: win, directories: new DirectoryService(), folderFiles: new Map(), markdownImages: new Map(), folderSelection: 0, version: 0, started: 0,
-    ready: false, pending: [], pinned: false, disposed: false, rendererFailures: [],
+    ready: false, pending: [], pinned: false, alwaysOnTop: false, disposed: false, rendererFailures: [],
     loaded: Promise.resolve(),
   };
   const contents = win.webContents;
@@ -231,15 +239,12 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
       contexts.delete(contents);
       if (active === ctx) {
         active = undefined;
-        if (finderSourceId) forgetSource();
+        forgetSource();
       }
     }
   });
   win.on('show', () => { if (ctx === active) linuxPreviewer?.visibilityChanged(true); syncNativeTopmost(ctx); });
   win.on('hide', () => { if (ctx === active) linuxPreviewer?.visibilityChanged(false); });
-  win.on('blur', () => {
-    if (ctx.pinned && win.isVisible()) { win.setAlwaysOnTop(true, 'floating'); syncNativeTopmost(ctx); }
-  });
   win.on('unresponsive', () => diagnostic('window-unresponsive'));
   win.on('responsive', () => diagnostic('window-responsive'));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -255,6 +260,7 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
     for (const item of ctx.pending.splice(0)) win.webContents.send(item.channel, item.payload);
     if (integrationStatus) win.webContents.send('integration-status', integrationStatus);
     win.webContents.send('pin-state', ctx.pinned);
+    win.webContents.send('topmost-state', ctx.alwaysOnTop);
   });
   win.webContents.on('render-process-gone', (_event, details) => {
     if (ctx.disposed || isQuitting) return;
@@ -289,8 +295,6 @@ function setPinned(ctx: PreviewContext, value: boolean): void {
   if (value) {
     if (!ctx.currentPath) { send(ctx, 'pin-state', false); return; }
     ctx.pinned = true;
-    ctx.window.setAlwaysOnTop(true, 'floating');
-    syncNativeTopmost(ctx);
     send(ctx, 'pin-state', true);
     if (active === ctx) {
       active = undefined;
@@ -300,20 +304,29 @@ function setPinned(ctx: PreviewContext, value: boolean): void {
     return;
   }
   const previous = active;
-  if (previous && previous !== ctx && !previous.disposed) {
-    if (previous.currentPath && previous.window.isVisible()) {
-      previous.pinned = true;
-      previous.window.setAlwaysOnTop(true, 'floating');
-      syncNativeTopmost(previous);
-      send(previous, 'pin-state', true);
-    } else destroyWindow(previous);
-  }
-  forgetSource();
   ctx.pinned = false;
-  ctx.window.setAlwaysOnTop(false, 'floating');
-  syncNativeTopmost(ctx);
-  active = ctx;
   send(ctx, 'pin-state', false);
+  // A visible active preview keeps its file-manager connection. The newly
+  // unpinned window stays independent until closed, without changing it.
+  if (previous && previous !== ctx && !previous.disposed && !previous.window.isDestroyed()) {
+    if (previous.window.isVisible() || previous.currentPath) return;
+    destroyWindow(previous);
+  }
+  active = ctx;
+}
+
+function setAlwaysOnTop(ctx: PreviewContext, value: boolean): void {
+  if (ctx.disposed || ctx.alwaysOnTop === value) return;
+  ctx.alwaysOnTop = value;
+  ctx.window.setAlwaysOnTop(value, 'floating');
+  syncNativeTopmost(ctx);
+  send(ctx, 'topmost-state', value);
+}
+
+function openFromWindow(ctx: PreviewContext, filePath: string): Promise<void> {
+  const target = ctx.pinned ? ensureActive(ctx) : ctx;
+  if (target === active) forgetSource();
+  return openFile(target, filePath);
 }
 
 function fromEvent(event: { sender?: Electron.WebContents; senderFrame?: Electron.WebFrameMain | null } | undefined): PreviewContext | undefined {
@@ -642,12 +655,12 @@ if (!hasLock) {
     ipcMain.handle('select-file', async (event) => {
       const ctx = fromEvent(event); if (!ctx) return;
       const result = await dialog.showOpenDialog(ctx.window, { properties: ['openFile'] });
-      if (!result.canceled && result.filePaths[0]) { forgetSource(); await openFile(ctx.pinned ? ensureActive(ctx) : ctx, result.filePaths[0]); }
+      if (!result.canceled && result.filePaths[0]) await openFromWindow(ctx, result.filePaths[0]);
     });
     ipcMain.handle('select-folder', async (event) => {
       const ctx = fromEvent(event); if (!ctx) return;
       const result = await dialog.showOpenDialog(ctx.window, { properties: ['openDirectory'] });
-      if (!result.canceled && result.filePaths[0]) { forgetSource(); await openFile(ctx.pinned ? ensureActive(ctx) : ctx, result.filePaths[0]); }
+      if (!result.canceled && result.filePaths[0]) await openFromWindow(ctx, result.filePaths[0]);
     });
     ipcMain.handle('open-with-default', async (event) => {
       const ctx = fromEvent(event);
@@ -785,12 +798,13 @@ if (!hasLock) {
       : readStartup(app, process.platform, process.execPath, Boolean(process.defaultApp)));
     ipcMain.handle('open-file', (event, filePath: string) => {
       const ctx = fromEvent(event); if (!ctx) return;
-      forgetSource(); return openFile(ctx.pinned ? ensureActive(ctx) : ctx, filePath);
+      return openFromWindow(ctx, filePath);
     });
     ipcMain.on('hide-preview', (event) => { const ctx = fromEvent(event); if (ctx) hideWindow(ctx); });
     ipcMain.on('focus-preview', (event) => { const ctx = fromEvent(event); if (ctx && ctx.window.isVisible()) ctx.window.focus(); });
     ipcMain.on('preview-metric', (event, phase: string) => { const ctx = fromEvent(event); if (ctx) trace(ctx, phase); });
     ipcMain.on('set-pinned', (event, enabled: unknown) => { const ctx = fromEvent(event); if (ctx && typeof enabled === 'boolean') setPinned(ctx, enabled); });
+    ipcMain.on('set-always-on-top', (event, enabled: unknown) => { const ctx = fromEvent(event); if (ctx && typeof enabled === 'boolean') setAlwaysOnTop(ctx, enabled); });
     ipcMain.on('open-project-link', (event, destination: unknown) => {
       if (!fromEvent(event)) return;
       const url = destination === 'organization' ? 'https://www.chaoleme.cn/' : destination === 'flyfish' ? 'https://github.com/flyfish-dev/file-viewer' : destination === 'releases' ? 'https://github.com/Chaoleme-Studio/quick_look_fast/releases/latest' : undefined;

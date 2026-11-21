@@ -24,7 +24,7 @@ button:focus-visible { outline: 2px solid #91b6ff; outline-offset: 2px; }
 .icon-action { width: 34px; height: 34px; display: grid; place-items: center; padding: 7px; border: 0; border-radius: 7px; color: #98a6bb; background: transparent; }
 .icon-action:hover { color: #e5ebf6; background: #303745; }
 .icon-action svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.pin-action[aria-pressed="true"] { color: #b5cbff; background: #35435c; }
+.pin-action[aria-pressed="true"], .topmost-action[aria-pressed="true"] { color: #b5cbff; background: #35435c; }
 .open-action { padding: 8px 12px; font-size: 12px; white-space: nowrap; }
 .open-action:hover, .close-action:hover { color: #fff; background: #303745; }
 .open-action:disabled { color: #697384; cursor: default; background: transparent; }
