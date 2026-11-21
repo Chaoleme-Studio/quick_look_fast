@@ -45,12 +45,22 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     registerSchemesAsPrivileged() {},
     handle: (scheme, handler) => routes.set(scheme, handler),
   };
-  let networkFilter, updateRequests = 0;
+  let networkFilter;
+  const updateRequests = [];
   const session = {
     defaultSession: { webRequest: { onBeforeRequest: (_filter, handler) => { networkFilter = handler; } } },
     fromPartition: (name) => {
       assert.equal(name, 'quicklook-fast-update');
-      return { fetch: async (url) => { updateRequests++; assert.match(url, /^https:\/\/api\.github\.com\//); return new Response(JSON.stringify({ tag_name: 'v0.2.0' })); } };
+      return { fetch: async (url) => { updateRequests.push(url); return new Response('', { status: 404 }); } };
+    },
+  };
+  const net = {
+    request: (options) => {
+      updateRequests.push(options.url);
+      const request = new EventEmitter();
+      request.abort = () => {};
+      request.end = () => queueMicrotask(() => request.emit('redirect', 302, 'HEAD', 'https://github.com/Chaoleme-Studio/quick_look_fast/releases/tag/v0.2.0'));
+      return request;
     },
   };
   app.getVersion = () => '0.1.2';
@@ -98,7 +108,7 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     destroy() {}
   }
   const electron = {
-    app, BrowserWindow, ipcMain, protocol, session, Tray,
+    app, BrowserWindow, ipcMain, protocol, session, net, Tray,
     globalShortcut: { unregisterAll() {}, unregister() {}, isRegistered: () => false, register: () => true },
     Menu: { buildFromTemplate: () => ({}) },
     nativeImage: { createFromBitmap: () => ({}), createFromPath: () => ({ isEmpty: () => false, setTemplateImage() {} }) },
@@ -139,11 +149,14 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     assert.equal((await handlers.get('startup-set')(null, false)).enabled, false);
     assert.equal(preventedColdOpen, true, 'early Finder events should be retained until initialization');
     assert.equal(await handlers.get('app-version')({ sender: window.webContents }), '0.1.2');
-    assert.equal(updateRequests, 0, 'reading the version must not send a request');
+    assert.equal(updateRequests.length, 0, 'reading the version must not send a request');
     assert.equal((await handlers.get('check-for-updates')({ sender: {} })).state, 'error');
-    assert.equal(updateRequests, 0, 'untrusted senders cannot initiate a check');
+    assert.equal(updateRequests.length, 0, 'untrusted senders cannot initiate a check');
     assert.equal((await handlers.get('check-for-updates')({ sender: window.webContents })).state, 'available');
-    assert.equal(updateRequests, 1, 'the request is made only after the explicit check');
+    assert.deepEqual(updateRequests, [
+      'https://github.com/Chaoleme-Studio/quick_look_fast/releases/latest',
+      'https://github.com/Chaoleme-Studio/quick_look_fast/releases/download/v0.2.0/update.json',
+    ], 'the update requests are made only after the explicit check');
     window.webContents.mainFrame = {};
     const childFrame = { sender: window.webContents, senderFrame: {} };
     assert.equal((await handlers.get('startup-set')(childFrame, true)).enabled, false, 'an embedded page cannot change startup');
