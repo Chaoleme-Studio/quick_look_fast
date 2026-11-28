@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { fileViewerRenderers } from '@file-viewer/vite-plugin';
 import chartFix from './patch/flyfish-pptx-chart-fix.cjs';
 import rowFix from './patch/flyfish-xlsx-row-fix.cjs';
+import zoomFix from './patch/flyfish-xlsx-zoom-fix.cjs';
 import docxOutline from './patch/flyfish-docx-outline.cjs';
 
 let patchedDocxOutline = false;
@@ -24,8 +25,9 @@ export default defineConfig({
     } },
     { name: 'quicklook-xlsx-row-heights', enforce: 'pre', transform(code, id) {
       const file = id.replaceAll('\\', '/');
-      if (file.endsWith('/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js')) return rowFix.patchSpreadsheet(code);
+      if (file.endsWith('/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js')) return zoomFix.patchSpreadsheet(rowFix.patchSpreadsheet(code));
       if (file.endsWith('/@file-viewer/renderer-spreadsheet/dist/spreadsheet/autoRowHeight.js')) return rowFix.patchAutoRowHeight(code);
+      if (file.endsWith('/@file-viewer/renderer-spreadsheet/dist/spreadsheet/view.js')) return zoomFix.patchView(code);
     } },
     fileViewerRenderers({ copyAssets: true, inject: false, chunkStrategy: 'none' }),
   ],

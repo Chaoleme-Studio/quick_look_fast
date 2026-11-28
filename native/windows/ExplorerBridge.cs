@@ -135,7 +135,7 @@ internal static class ExplorerBridge
             {
                 Dictionary<string, object> command = json.Deserialize<Dictionary<string, object>>(line);
                 string type = command.ContainsKey("type") ? command["type"] as string : null;
-                if (type == "pin" || type == "raise")
+                if (type == "pin" || type == "raise" || type == "switcher")
                 {
                     long value;
                     string handle = command.ContainsKey("handle") ? command["handle"] as string : null;
@@ -146,11 +146,30 @@ internal static class ExplorerBridge
                         GetWindowOwnerProcessId(window, out owner);
                         if (owner == parentProcessId && IsWindow(window))
                         {
-                            bool keepOnTop = (bool)command["enabled"];
-                            const uint flags = 0x0001 | 0x0002 | 0x0010 | 0x0200; // no resize, move, activation or owner z-order
-                            if (type == "raise") SetWindowPos(window, new IntPtr(-1), 0, 0, 0, 0, flags);
-                            if (type == "pin" || !keepOnTop)
-                                SetWindowPos(window, new IntPtr(keepOnTop ? -1 : -2), 0, 0, 0, 0, flags);
+                            bool enabled = (bool)command["enabled"];
+                            if (type == "switcher")
+                            {
+                                // Electron's setSkipTaskbar updates the taskbar but
+                                // does not change the window style used by Alt+Tab.
+                                const int extendedStyle = -20;
+                                const int toolWindow = 0x00000080;
+                                const int appWindow = 0x00040000;
+                                int style = GetWindowLong(window, extendedStyle);
+                                int next = enabled ? (style & ~toolWindow) | appWindow : (style | toolWindow) & ~appWindow;
+                                if (style != next)
+                                {
+                                    SetWindowLong(window, extendedStyle, next);
+                                    const uint refresh = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020 | 0x0200;
+                                    SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0, refresh);
+                                }
+                            }
+                            else
+                            {
+                                const uint flags = 0x0001 | 0x0002 | 0x0010 | 0x0200; // no resize, move, activation or owner z-order
+                                if (type == "raise") SetWindowPos(window, new IntPtr(-1), 0, 0, 0, 0, flags);
+                                if (type == "pin" || !enabled)
+                                    SetWindowPos(window, new IntPtr(enabled ? -1 : -2), 0, 0, 0, 0, flags);
+                            }
                         }
                     }
                     continue;
@@ -759,6 +778,10 @@ internal static class ExplorerBridge
     private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+    private static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+    private static extern int SetWindowLong(IntPtr window, int index, int value);
     [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")]
     private static extern uint GetWindowOwnerProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll")]

@@ -102,6 +102,8 @@ test('opens and toggles a file, and a newer request wins over a slow one', { ski
     destroy() { this.visible = false; this.focused = false; this.destroyed = true; this.emit('closed'); }
     focus() { this.focused = true; this.focusCount += 1; }
     setAlwaysOnTop(value) { this.alwaysOnTop = value; }
+    setSkipTaskbar(value) { this.skipTaskbar = value; }
+    setTitle(value) { this.title = value; }
   }
   class Tray extends EventEmitter {
     setToolTip() {}

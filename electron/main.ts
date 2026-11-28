@@ -118,6 +118,13 @@ function syncNativeTopmost(ctx: PreviewContext): void {
   writeBridge({ type: 'pin', handle: value, enabled: ctx.alwaysOnTop });
 }
 
+function syncNativeSwitcher(ctx: PreviewContext): void {
+  if (process.platform !== 'win32' || !bridge?.stdin.writable || ctx.disposed || ctx.window.isDestroyed()) return;
+  const handle = ctx.window.getNativeWindowHandle();
+  const value = handle.length >= 8 ? handle.readBigUInt64LE().toString() : String(handle.readUInt32LE());
+  writeBridge({ type: 'switcher', handle: value, enabled: ctx.pinned });
+}
+
 function raiseWithoutActivation(ctx: PreviewContext): void {
   if (process.platform !== 'win32' || !bridge?.stdin.writable || ctx.disposed || ctx.window.isDestroyed()) return;
   const handle = ctx.window.getNativeWindowHandle();
@@ -243,7 +250,7 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
       }
     }
   });
-  win.on('show', () => { if (ctx === active) linuxPreviewer?.visibilityChanged(true); syncNativeTopmost(ctx); });
+  win.on('show', () => { if (ctx === active) linuxPreviewer?.visibilityChanged(true); syncNativeTopmost(ctx); syncNativeSwitcher(ctx); });
   win.on('hide', () => { if (ctx === active) linuxPreviewer?.visibilityChanged(false); });
   win.on('unresponsive', () => diagnostic('window-unresponsive'));
   win.on('responsive', () => diagnostic('window-responsive'));
@@ -257,6 +264,7 @@ function createPreviewWindow(previous?: PreviewContext): PreviewContext {
   win.webContents.on('will-navigate', (event, url) => { if (!url.startsWith('slowlook://app/')) event.preventDefault(); });
   win.webContents.on('did-finish-load', () => {
     ctx.ready = true;
+    if (process.platform === 'win32' && ctx.currentPath) win.setTitle(`${path.basename(ctx.currentPath)} — QuickLook Fast`);
     for (const item of ctx.pending.splice(0)) win.webContents.send(item.channel, item.payload);
     if (integrationStatus) win.webContents.send('integration-status', integrationStatus);
     win.webContents.send('pin-state', ctx.pinned);
@@ -295,6 +303,7 @@ function setPinned(ctx: PreviewContext, value: boolean): void {
   if (value) {
     if (!ctx.currentPath) { send(ctx, 'pin-state', false); return; }
     ctx.pinned = true;
+    if (process.platform === 'win32') { ctx.window.setSkipTaskbar(false); syncNativeSwitcher(ctx); }
     send(ctx, 'pin-state', true);
     if (active === ctx) {
       active = undefined;
@@ -305,6 +314,7 @@ function setPinned(ctx: PreviewContext, value: boolean): void {
   }
   const previous = active;
   ctx.pinned = false;
+  if (process.platform === 'win32') { ctx.window.setSkipTaskbar(true); syncNativeSwitcher(ctx); }
   send(ctx, 'pin-state', false);
   // A visible active preview keeps its file-manager connection. The newly
   // unpinned window stays independent until closed, without changing it.
@@ -353,6 +363,7 @@ async function openFile(ctx: PreviewContext, filePath: string, triggeredAt = Dat
   const absolutePath = path.resolve(filePath);
   const version = ++ctx.version;
   ctx.currentPath = absolutePath;
+  if (process.platform === 'win32') ctx.window.setTitle(`${path.basename(absolutePath) || absolutePath} — QuickLook Fast`);
   ctx.currentFile = undefined;
   ctx.folderSelection += 1;
   ctx.folderPreview = undefined;
@@ -516,7 +527,7 @@ function setFinderMode(mode: FinderMode, promptAccessibility = false): void {
     },
     onSelection(filePath, sourceId) {
       const ctx = active;
-      if (revision === finderRevision && macSettings.finderNavigation && finderSourceId === sourceId && ctx?.currentPath &&
+      if (revision === finderRevision && finderSourceId === sourceId && ctx?.currentPath &&
           !ctx.pinned && ctx.window.isVisible() && !ctx.window.isMinimized() && ctx.currentPath !== filePath) {
         void openFile(ctx, filePath, Date.now(), ctx.window.isFocused());
       }
@@ -547,9 +558,9 @@ function openFinderPreview(filePath: string, sourceId: string): void {
 
 function syncFinderTracking(rememberSource = false): void {
   if (!finderSourceId) return;
-  const follow = macSettings.finderNavigation && Boolean(active?.window.isVisible());
+  const follow = Boolean(active?.window.isVisible());
   if ((follow || rememberSource) && active?.currentPath) {
-    finderSpace?.track(finderSourceId, active.currentPath);
+    finderSpace?.track(finderSourceId, active.currentPath, macSettings.finderNavigation);
   }
   if (!follow) finderSpace?.forget(finderSourceId);
 }
@@ -578,7 +589,7 @@ function startWindowsBridge(): void {
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
       try {
         const message = JSON.parse(line) as { type: string; path?: string; timestamp?: number; sourceId?: string; message?: string; recovery?: boolean };
-        if (message.type === 'ready') { sendStatus(message.recovery === false ? '键盘监听已启动，自动恢复不可用' : ''); for (const ctx of contexts.values()) syncNativeTopmost(ctx); }
+        if (message.type === 'ready') { sendStatus(message.recovery === false ? '键盘监听已启动，自动恢复不可用' : ''); for (const ctx of contexts.values()) { syncNativeTopmost(ctx); syncNativeSwitcher(ctx); } }
         if (message.type === 'status' && typeof message.message === 'string') sendStatus(message.message);
         if (message.type === 'preview' && message.path) { activeSourceId = message.sourceId; openExternalFile(message.path, message.timestamp); }
         const ctx = active;

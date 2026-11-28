@@ -158,6 +158,7 @@ private struct FinderCommand: Decodable {
     let sourceId: String
     let filePath: String?
     let key: NavigationKey?
+    let followKeyboard: Bool?
 }
 
 private final class FinderSpaceBridge {
@@ -167,6 +168,7 @@ private final class FinderSpaceBridge {
         let isDesktop: Bool
         var filePath: String
         var following = false
+        var followKeyboard = true
     }
 
     private let workspace = NSWorkspace.shared
@@ -202,7 +204,12 @@ private final class FinderSpaceBridge {
         }
 
         stopTap()
-        let mask = CGEventMask(1) << CGEventType.keyDown.rawValue | CGEventMask(1) << CGEventType.keyUp.rawValue
+        // Finder's per-process tap also sees clicks in the originating window.
+        // Observe mouse-up without consuming it so a click can update the
+        // preview after Finder has committed its new selection.
+        let mask = CGEventMask(1) << CGEventType.keyDown.rawValue |
+            CGEventMask(1) << CGEventType.keyUp.rawValue |
+            CGEventMask(1) << CGEventType.leftMouseUp.rawValue
         guard let newTap = CGEvent.tapCreateForPid(pid: pid, place: .headInsertEventTap, options: .defaultTap,
                  eventsOfInterest: mask, callback: { _, type, event, context in
                      guard let context else { return Unmanaged.passUnretained(event) }
@@ -239,10 +246,17 @@ private final class FinderSpaceBridge {
             report("unavailable")
             return pass
         }
+        if type == .leftMouseUp {
+            if let origin, origin.following, let frontPID = workspace.frontmostApplication?.processIdentifier,
+               frontPID == finderPID || origin.isDesktop {
+                scheduleSelectionCheck(origin.id, desktopInputPID: origin.isDesktop ? frontPID : nil)
+            }
+            return pass
+        }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         if type == .keyDown, event.flags.intersection(modifiers).isEmpty,
            keyCode == NavigationKey.up.code || keyCode == NavigationKey.down.code,
-           let origin, origin.following, let frontPID = workspace.frontmostApplication?.processIdentifier,
+           let origin, origin.following, origin.followKeyboard, let frontPID = workspace.frontmostApplication?.processIdentifier,
            frontPID == finderPID || origin.isDesktop {
             scheduleSelectionCheck(origin.id, desktopInputPID: origin.isDesktop ? frontPID : nil)
         }
@@ -283,15 +297,17 @@ private final class FinderSpaceBridge {
             guard let path = command.filePath else { return }
             if var origin, origin.id == command.sourceId {
                 origin.following = true
+                origin.followKeyboard = command.followKeyboard ?? true
                 setOrigin(origin)
                 return
             }
             guard !interceptSpace, let finder, let finderPID,
                   workspace.frontmostApplication?.processIdentifier == finderPID,
                   let selected = selection.read(finder), selected.filePath == path else { return }
-            setOrigin(Origin(id: command.sourceId, container: selected.container, isDesktop: selected.isDesktop, filePath: path, following: true))
+            setOrigin(Origin(id: command.sourceId, container: selected.container, isDesktop: selected.isDesktop,
+                             filePath: path, following: true, followKeyboard: command.followKeyboard ?? true))
         case .navigate:
-            guard let origin, origin.id == command.sourceId, origin.following, let finder, let finderPID, let key = command.key,
+            guard let origin, origin.id == command.sourceId, origin.following, origin.followKeyboard, let finder, let finderPID, let key = command.key,
                   isNavigationForeground(finderPID),
                   let selected = selection.read(finder), CFEqual(selected.container, origin.container),
                   isNavigationForeground(finderPID) else { return }

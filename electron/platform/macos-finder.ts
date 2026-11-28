@@ -57,7 +57,7 @@ export function startFinderSpaceBridge(executable: string, callbacks: {
     callbacks.onStatus(value);
   }
 
-  function send(command: { action: 'track' | 'navigate' | 'forget'; sourceId: string; filePath?: string; key?: FinderNavigationKey }): void {
+  function send(command: { action: 'track' | 'navigate' | 'forget'; sourceId: string; filePath?: string; key?: FinderNavigationKey; followKeyboard?: boolean }): void {
     if (!stopped && status === 'active' && bridge.stdin.writable) bridge.stdin.write(`${JSON.stringify(command)}\n`);
   }
 
@@ -83,7 +83,7 @@ export function startFinderSpaceBridge(executable: string, callbacks: {
   });
 
   return {
-    track(sourceId: string, filePath: string) { send({ action: 'track', sourceId, filePath }); },
+    track(sourceId: string, filePath: string, followKeyboard?: boolean) { send({ action: 'track', sourceId, filePath, ...(followKeyboard === undefined ? {} : { followKeyboard }) }); },
     navigate(sourceId: string, key: FinderNavigationKey) { send({ action: 'navigate', sourceId, key }); },
     forget(sourceId: string) { send({ action: 'forget', sourceId }); },
     stop() {

@@ -49,6 +49,7 @@ for (const platform of ['darwin', 'win32']) {
         this.focused = false;
         this.destroyed = false;
         this.alwaysOnTop = options.alwaysOnTop;
+        this.skipTaskbar = options.skipTaskbar;
         this.raised = 0;
         this.inactiveShows = 0;
         this.messages = [];
@@ -71,6 +72,8 @@ for (const platform of ['darwin', 'win32']) {
       hide() { this.visible = false; this.focused = false; this.emit('hide'); }
       destroy() { this.destroyed = true; this.visible = false; this.emit('closed'); }
       setAlwaysOnTop(value) { this.alwaysOnTop = value; }
+      setSkipTaskbar(value) { this.skipTaskbar = value; }
+      setTitle(value) { this.title = value; }
     }
     class Tray extends EventEmitter { setToolTip() {} setContextMenu() {} destroy() {} }
     const electron = {
@@ -98,8 +101,9 @@ for (const platform of ['darwin', 'win32']) {
       for (const line of lines) if (line) commands.push(JSON.parse(line));
     });
     const forgotten = [];
+    const tracked = [];
     let finderCallbacks;
-    const finder = { track() {}, forget: (id) => forgotten.push(id), navigate() {}, stop() {} };
+    const finder = { track: (...args) => tracked.push(args), forget: (id) => forgotten.push(id), navigate() {}, stop() {} };
     Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
     Module._load = function (request, parent, isMain) {
       if (request === 'electron') return electron;
@@ -126,6 +130,10 @@ for (const platform of ['darwin', 'win32']) {
       const a = windows[0];
       sendPreview(files[0], 'source-a');
       await waitFor(() => last(a, 'preview-file')?.path === files[0], 'first preview did not open');
+      if (platform === 'win32') {
+        assert.equal(a.skipTaskbar, true, 'ordinary previews stay out of the Windows switcher');
+        assert.equal(a.title, 'A.txt — QuickLook Fast', 'switcher title identifies the previewed file');
+      }
       if (platform === 'darwin') {
         assert.equal(a.inactiveShows, 1, 'the first Finder preview uses the inactive foreground operation');
         assert.equal(a.raised, 0, 'ordinary window ordering must not undo the inactive foreground operation');
@@ -133,6 +141,10 @@ for (const platform of ['darwin', 'win32']) {
       const aUrl = last(a, 'preview-file').url;
       ipcMain.emit('set-always-on-top', { sender: a.webContents }, true);
       ipcMain.emit('set-pinned', { sender: a.webContents }, true);
+      if (platform === 'win32') {
+        assert.equal(a.skipTaskbar, false, 'a pinned preview can appear in Alt+Tab');
+        assert.ok(commands.some((command) => command.type === 'switcher' && command.handle === '1' && command.enabled === true), 'pinning updates the native switcher style');
+      }
       assert.equal(a.alwaysOnTop, true, 'pinning must preserve the separately chosen topmost state');
       ipcMain.emit('set-always-on-top', { sender: a.webContents }, false);
       assert.equal(last(a, 'pin-state'), true, 'disabling topmost must not unpin');
@@ -143,6 +155,11 @@ for (const platform of ['darwin', 'win32']) {
       assert.equal(b.options.y, 494, 'new window moves inward when the old one is at the bottom edge');
       sendPreview(files[1], 'source-b');
       await waitFor(() => last(b, 'preview-file')?.path === files[1], 'second preview did not open');
+      if (platform === 'win32') {
+        assert.equal(a.skipTaskbar, false, 'opening a second preview leaves the pinned window in the switcher');
+        assert.equal(b.skipTaskbar, true, 'the new transient preview stays out of the switcher');
+        assert.equal(b.title, 'B.txt — QuickLook Fast');
+      }
       assert.equal(b.alwaysOnTop, false);
       assert.equal(last(b, 'pin-state'), false);
       if (platform === 'darwin') {
@@ -154,22 +171,39 @@ for (const platform of ['darwin', 'win32']) {
 
       const forgetsBeforeUnpin = sourceForgetCount();
       ipcMain.emit('set-pinned', { sender: a.webContents }, false);
+      if (platform === 'win32') {
+        assert.equal(a.skipTaskbar, true, 'unpinning removes only that preview from the switcher');
+        assert.equal(commands.filter((command) => command.type === 'switcher' && command.handle === '1').at(-1)?.enabled, false, 'unpinning restores the native transient style');
+      }
       assert.equal(last(a, 'pin-state'), false);
       assert.equal(last(b, 'pin-state'), false, 'unpinning A must not pin B');
       assert.equal(sourceForgetCount(), forgetsBeforeUnpin, 'unpinning A must retain B\'s file-manager connection');
       assert.equal(await (await fetch(aUrl)).text(), 'A.txt', 'A keeps its own file');
+      if (platform === 'darwin') {
+        await handlers.get('mac-settings-set')({ sender: b.webContents }, 'finderNavigation', false);
+        assert.deepEqual(tracked.at(-1), ['source-b', files[1], false], 'mouse tracking continues when arrow-key navigation is disabled');
+      }
       sendSelection(files[2], 'source-b');
       await waitFor(() => last(b, 'preview-file')?.path === files[2], 'active B stopped following its source');
       assert.equal(last(a, 'preview-file').path, files[0], 'detached A does not follow B\'s selection');
+      if (platform === 'darwin') await handlers.get('mac-settings-set')({ sender: b.webContents }, 'finderNavigation', true);
 
       ipcMain.emit('set-pinned', { sender: a.webContents }, true);
       assert.equal(windows.length, 2, 'pinning a detached window does not replace the active window');
-      ipcMain.emit('set-pinned', { sender: a.webContents }, false);
       ipcMain.emit('set-pinned', { sender: b.webContents }, true);
+      if (platform === 'win32') {
+        assert.equal(a.skipTaskbar, false, 'the first fixed preview remains in the switcher');
+        assert.equal(b.skipTaskbar, false, 'each fixed preview has its own switcher entry');
+      }
       assert.equal(windows.length, 3);
       const c = windows[2];
       sendPreview(files[1], 'source-c');
       await waitFor(() => last(c, 'preview-file')?.path === files[1], 'third preview did not open');
+      ipcMain.emit('set-pinned', { sender: a.webContents }, false);
+      if (platform === 'win32') {
+        assert.equal(a.skipTaskbar, true, 'unpinning A removes its switcher entry');
+        assert.equal(b.skipTaskbar, false, 'unpinning A keeps B in the switcher');
+      }
       ipcMain.emit('set-pinned', { sender: b.webContents }, false);
       assert.equal(last(c, 'pin-state'), false, 'unpinning B must not pin C');
       ipcMain.emit('hide-preview', { sender: b.webContents });

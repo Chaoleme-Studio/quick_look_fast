@@ -60,7 +60,7 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
       const state = { canvas: this, measureText: (value) => ({ width: String(value).length * 7 }), createLinearGradient: () => ({ addColorStop() {} }), createPattern: () => null };
       return new Proxy(state, { get(target, property) {
         if (property in target) return target[property];
-        return (...args) => { if (['fillText', 'strokeText', 'fillRect', 'strokeRect'].includes(property)) canvasCalls.push({ method: property, color: target.fillStyle, value: args[0] }); };
+        return (...args) => { if (['fillText', 'strokeText', 'fillRect', 'strokeRect'].includes(property)) canvasCalls.push({ method: property, color: target.fillStyle, font: target.font, value: args[0], args }); };
       } });
     };
     // Chromium supports modulepreload. Avoid Happy DOM's fallback trying to
@@ -605,13 +605,21 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
         assert.match(root.textContent, /701\s*行，16\s*列/, 'Excel should parse the sample sheet dimensions');
         assert.ok(canvasCalls.some((call) => call.method === 'fillText'), 'Excel should issue canvas text drawing commands');
         assert.ok(canvasCalls.some((call) => call.method === 'fillRect'), 'Excel should issue canvas fill commands');
-        assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'a wide spreadsheet should not be shrunk to fit the viewport');
+        const headerFontSize = (call) => Number(/^bold ([\d.]+)px Aptos,/.exec(call.font || '')?.[1]);
+        const hasHeaderSize = (from, size) => canvasCalls.slice(from).some((call) => call.method === 'fillText' && Math.abs(headerFontSize(call) - size) < 0.01);
+        const defaultHeaderSize = useBundle ? 8.4 : 12;
+        assert.ok(hasHeaderSize(0, defaultHeaderSize), 'the built Excel draws at 70% of the original size while its control reads 100%');
+        assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'the new default is labelled 100%');
+        let beforeZoom = canvasCalls.length;
         root.querySelector('[data-viewer-toolbar-key="zoom-in"]').click();
-        for (let attempt = 0; attempt < 100 && root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent !== '110%'; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        for (let attempt = 0; attempt < 100 && (root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent !== '110%' || !hasHeaderSize(beforeZoom, defaultHeaderSize * 1.1)); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
         assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '110%', 'manual spreadsheet zoom remains available');
+        assert.ok(hasHeaderSize(beforeZoom, defaultHeaderSize * 1.1), 'zoom-in scales the new baseline by 10%');
+        beforeZoom = canvasCalls.length;
         root.querySelector('[data-viewer-toolbar-key="zoom-reset"]').click();
-        for (let attempt = 0; attempt < 100 && root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent !== '100%'; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        for (let attempt = 0; attempt < 100 && (root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent !== '100%' || !hasHeaderSize(beforeZoom, defaultHeaderSize)); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
         assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'reset returns the spreadsheet to its default size');
+        assert.ok(hasHeaderSize(beforeZoom, defaultHeaderSize), 'reset restores the new baseline');
       } else {
         for (let attempt = 0; attempt < 500 && root.querySelector('.flyfish-pptx-content')?.dataset.renderState !== 'ready'; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
         const content = root.querySelector('.flyfish-pptx-content');
@@ -647,6 +655,18 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
         assert.match(root.querySelector('.file-viewer-web-search-count')?.textContent || '', /\/[1-9]\d*$/, `${format} search should find rendered text`);
       }
     }
+    const csvPath = path.join(directory, 'scale-check.csv');
+    const csvBytes = Buffer.from('Name,Value\nAlpha,123\nBeta,456\n');
+    await writeFile(csvPath, csvBytes);
+    activeFile = { token: 'scale-check', path: csvPath };
+    const beforeCsvDraw = canvasCalls.length;
+    callbacks.start({ name: 'scale-check.csv' });
+    callbacks.preview({ url: `${origin}/preview/scale-check/scale-check.csv`, name: 'scale-check.csv', size: csvBytes.length });
+    const csvHeaderDrawn = () => canvasCalls.slice(beforeCsvDraw).some((call) => call.method === 'fillText' && /^bold 12px Aptos,/.test(call.font || ''));
+    for (let attempt = 0; attempt < 300 && !csvHeaderDrawn(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(csvHeaderDrawn(), 'CSV keeps its original default size');
+    assert.equal(window.document.querySelector('.viewer-root')?.shadowRoot?.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%');
+
     const protectedSource = await readFile(new URL('./fixtures/office-sample.xlsx', import.meta.url));
     const protectedBytes = officeCrypto.encrypt(protectedSource, { password: 'test123' });
     const protectedFile = path.join(directory, 'protected.xlsx'); await writeFile(protectedFile, protectedBytes);
