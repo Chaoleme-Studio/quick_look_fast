@@ -34,8 +34,11 @@ internal static class ExplorerBridge
     private static IntPtr lastClickedWindow;
     private static IntPtr lastClickedLister;
     private static int lastClickAt;
+    private static IntPtr lastSelectionWindow;
+    private static int lastSelectionAt;
     private static KeyboardRecovery hookRecovery;
     private static readonly SelectionCache CachedSelection = new SelectionCache();
+    private static readonly PreviewRequestTracker Requests = new PreviewRequestTracker();
     private static bool swallowedSpace;
     private static int swallowedAt;
     private static int parentProcessId;
@@ -66,7 +69,7 @@ internal static class ExplorerBridge
         internal IntPtr Focus;
         internal string Kind;
         internal long Timestamp;
-        internal int SelectionReadyAt;
+        internal PreviewRequestTracker.Ticket Ticket;
     }
 
     [STAThread]
@@ -203,6 +206,9 @@ internal static class ExplorerBridge
         {
             lock (Gate)
             {
+                Requests.SelectionInput();
+                lastSelectionWindow = GetForegroundWindow();
+                lastSelectionAt = Environment.TickCount;
                 if (source != null && source.Kind == "dopus" && GetForegroundWindow() == source.Window && NavigationQueue.Count < 32)
                 {
                     NavigationQueue.Enqueue(new Navigation { Key = "observe", SourceId = source.Id });
@@ -244,11 +250,8 @@ internal static class ExplorerBridge
             if (!CachedSelection.CanIntercept(foreground.Window, foreground.Kind, Environment.TickCount) && !sameSource)
                 return CallNextHookEx(hook, code, message, data);
             if (PreviewQueue.Count >= 64) return CallNextHookEx(hook, code, message, data);
-            int age = unchecked(Environment.TickCount - lastClickAt);
-            bool recentOpusClick = foreground.Kind == "dopus" && age >= 0 && age <= 350 && lastClickedLister == foreground.Window &&
-                foreground.Focus == lastClickedWindow;
             PreviewQueue.Enqueue(new PreviewRequest { Window = foreground.Window, Focus = foreground.Focus, Kind = foreground.Kind,
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), SelectionReadyAt = recentOpusClick ? unchecked(lastClickAt + 70) : 0 });
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Ticket = Requests.Issue(foreground.Window, foreground.Focus, foreground.Kind) });
         }
         swallowedSpace = true;
         swallowedAt = Environment.TickCount;
@@ -263,9 +266,17 @@ internal static class ExplorerBridge
             MouseEvent mouse = (MouseEvent)Marshal.PtrToStructure(data, typeof(MouseEvent));
             if ((mouse.Flags & 1) == 0)
             {
-                lastClickedWindow = WindowFromPoint(mouse.Position);
-                lastClickedLister = GetAncestor(lastClickedWindow, 2);
-                lastClickAt = Environment.TickCount;
+                IntPtr clicked = WindowFromPoint(mouse.Position);
+                IntPtr lister = GetAncestor(clicked, 2);
+                lock (Gate)
+                {
+                    lastClickedWindow = clicked;
+                    lastClickedLister = lister;
+                    lastClickAt = Environment.TickCount;
+                    lastSelectionWindow = lister;
+                    lastSelectionAt = lastClickAt;
+                    Requests.SelectionInput();
+                }
             }
         }
         return CallNextHookEx(mouseHook, code, message, data);
@@ -363,24 +374,34 @@ internal static class ExplorerBridge
                 Navigation navigation = null;
                 SourceContext navigationSource = null;
                 string status;
+                long previewSerial;
                 lock (Gate)
                 {
                     status = pendingStatus;
                     pendingStatus = null;
                     if (PreviewQueue.Count > 0) requested = PreviewQueue.Dequeue();
-                    if (NavigationQueue.Count > 0)
+                    else if (NavigationQueue.Count > 0)
                     {
                         navigation = NavigationQueue.Dequeue();
                         if (source != null && source.Id == navigation.SourceId) navigationSource = source;
                     }
+                    previewSerial = Requests.LatestSerial;
                 }
                 if (status != null)
                 {
                     Console.WriteLine(json.Serialize(new { type = "status", message = status }));
                     Console.Out.Flush();
                 }
+                // A physical Space request has priority over background follows.
+                // Otherwise a follow can change the current path just before the
+                // same Space is interpreted as a toggle and close the preview.
+                if (requested != null)
+                {
+                    ProcessPreviewRequest(shell, requested, json);
+                    continue;
+                }
                 if (navigation != null && navigationSource != null)
-                    NavigateSelection(shell, navigationSource, navigation, json);
+                    NavigateSelection(shell, navigationSource, navigation, json, previewSerial);
 
                 SourceContext foreground = GetFocusedSource();
                 string selected = foreground == null || foreground.Kind == "dopus" ? null : GetSelectedFile(shell, foreground);
@@ -397,7 +418,7 @@ internal static class ExplorerBridge
                     string sourceId = null;
                     lock (Gate)
                     {
-                        if (source != null && source.Window == foreground.Window && source.Focus == foreground.Focus &&
+                        if (Requests.LatestSerial == previewSerial && source != null && source.Window == foreground.Window && source.Focus == foreground.Focus &&
                             !String.Equals(source.Path, selected, StringComparison.OrdinalIgnoreCase))
                         {
                             source.Path = selected;
@@ -408,43 +429,6 @@ internal static class ExplorerBridge
                     {
                         Console.WriteLine(json.Serialize(new { type = "selection", path = selected, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sourceId = sourceId }));
                         Console.Out.Flush();
-                    }
-                }
-                if (requested != null && IsWindow(requested.Window) && IsWindow(requested.Focus))
-                {
-                    string runtime = null;
-                    string requestedSelection;
-                    if (requested.Kind == "dopus")
-                    {
-                        // A low-level hook observes Space before Opus has
-                        // necessarily processed the preceding mouse click.
-                        // Give that specific click a short bounded settling
-                        // window without delaying keyboard-only navigation.
-                        int remaining = requested.SelectionReadyAt == 0 ? 0 : unchecked(requested.SelectionReadyAt - Environment.TickCount);
-                        if (remaining > 0 && remaining <= 70) Thread.Sleep(remaining);
-                        runtime = DopusSelection.FindRuntime(requested.Window);
-                        DopusSelection.Selection result = DopusSelection.Query(runtime, requested.Window, requested.Focus);
-                        requestedSelection = result == null ? null : result.Path;
-                    }
-                    else requestedSelection = GetSelectedFile(shell, new SourceContext { Window = requested.Window, Focus = requested.Focus, Kind = requested.Kind });
-                    if (requestedSelection != null)
-                    {
-                        SourceContext active = new SourceContext { Window = requested.Window, Focus = requested.Focus, Kind = requested.Kind, Runtime = runtime, Path = requestedSelection, Id = Guid.NewGuid().ToString("N") };
-                        lock (Gate) { source = active; NavigationQueue.Clear(); }
-                        if (requested.Kind == "dopus") Console.WriteLine(json.Serialize(new { type = "status", message = "DOpus：已读取选中项" }));
-                        Console.WriteLine(json.Serialize(new { type = "preview", path = requestedSelection, timestamp = requested.Timestamp, sourceId = active.Id }));
-                        Console.Out.Flush();
-                    }
-                    else if (GetForegroundWindow() == requested.Window && IsWindow(requested.Focus))
-                    {
-                        if (requested.Kind == "dopus")
-                        {
-                            Console.WriteLine(json.Serialize(new { type = "status", message = "DOpus：未读取到选中项，请确认文件已选中且快捷键没有冲突" }));
-                            Console.Out.Flush();
-                        }
-                        // No usable selection: return the intercepted key to its original control.
-                        PostMessage(requested.Focus, WmKeyDown, new IntPtr(VkSpace), new IntPtr(1));
-                        PostMessage(requested.Focus, WmKeyUp, new IntPtr(VkSpace), new IntPtr(unchecked((int)0xC0000001)));
                     }
                 }
                 bool pending;
@@ -460,6 +444,83 @@ internal static class ExplorerBridge
         finally
         {
             Release(shell);
+        }
+    }
+
+    private static PreviewRequestTracker.Decision CheckPreviewRequest(PreviewRequest request, SourceContext foreground)
+    {
+        if (!IsWindow(request.Window) || !IsWindow(request.Focus) || foreground == null) return PreviewRequestTracker.Decision.Discard;
+        IntPtr focus = foreground.Focus;
+        // Opus may report the clicked child first and its file-display parent
+        // after the click settles. Both identify the same pane.
+        if (request.Kind == "dopus" && foreground.Window == request.Window &&
+            (IsChild(request.Focus, focus) || IsChild(focus, request.Focus))) focus = request.Focus;
+        return Requests.Check(request.Ticket, foreground.Window, focus, foreground.Kind);
+    }
+
+    private static void ProcessPreviewRequest(object shell, PreviewRequest request, JavaScriptSerializer json)
+    {
+        // One retry covers a selection change that occurred during a slow read.
+        // Repeated changes or a newer Space request make this result obsolete.
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            SourceContext foreground = GetFocusedSource();
+            PreviewRequestTracker.Decision before;
+            int remaining = 0;
+            lock (Gate)
+            {
+                before = CheckPreviewRequest(request, foreground);
+                if (before == PreviewRequestTracker.Decision.Retry) Requests.Refresh(request.Ticket);
+                int age = unchecked(Environment.TickCount - lastSelectionAt);
+                if (lastSelectionWindow == request.Window && age >= 0 && age < 70) remaining = 70 - age;
+            }
+            if (before == PreviewRequestTracker.Decision.Discard) return;
+            if (remaining > 0) Thread.Sleep(remaining);
+
+            string runtime = null;
+            string selected;
+            if (request.Kind == "dopus")
+            {
+                runtime = DopusSelection.FindRuntime(request.Window);
+                DopusSelection.Selection result = DopusSelection.Query(runtime, request.Window, request.Focus);
+                selected = result == null ? null : result.Path;
+            }
+            else selected = GetSelectedFile(shell, new SourceContext { Window = request.Window, Focus = request.Focus, Kind = request.Kind });
+
+            foreground = GetFocusedSource();
+            PreviewRequestTracker.Decision after;
+            SourceContext active = null;
+            lock (Gate)
+            {
+                after = CheckPreviewRequest(request, foreground);
+                if (after == PreviewRequestTracker.Decision.Accept && selected != null)
+                {
+                    active = new SourceContext { Window = request.Window, Focus = request.Focus, Kind = request.Kind,
+                        Runtime = runtime, Path = selected, Id = Guid.NewGuid().ToString("N") };
+                    source = active;
+                    NavigationQueue.Clear();
+                }
+            }
+            if (after == PreviewRequestTracker.Decision.Discard) return;
+            if (after == PreviewRequestTracker.Decision.Retry) continue;
+            if (active != null)
+            {
+                if (request.Kind == "dopus") Console.WriteLine(json.Serialize(new { type = "status", message = "DOpus：已读取选中项" }));
+                Console.WriteLine(json.Serialize(new { type = "preview", path = selected, timestamp = request.Timestamp, sourceId = active.Id }));
+                Console.Out.Flush();
+            }
+            else
+            {
+                if (request.Kind == "dopus")
+                {
+                    Console.WriteLine(json.Serialize(new { type = "status", message = "DOpus：未读取到选中项，请确认文件已选中且快捷键没有冲突" }));
+                    Console.Out.Flush();
+                }
+                // No usable selection: return the intercepted key to its original control.
+                PostMessage(request.Focus, WmKeyDown, new IntPtr(VkSpace), new IntPtr(1));
+                PostMessage(request.Focus, WmKeyUp, new IntPtr(VkSpace), new IntPtr(unchecked((int)0xC0000001)));
+            }
+            return;
         }
     }
 
@@ -487,7 +548,7 @@ internal static class ExplorerBridge
         finally { if (currentThread != targetThread) AttachThreadInput(currentThread, targetThread, false); }
     }
 
-    private static void NavigateSelection(object shell, SourceContext active, Navigation navigation, JavaScriptSerializer json)
+    private static void NavigateSelection(object shell, SourceContext active, Navigation navigation, JavaScriptSerializer json, long previewSerial)
     {
         if (!IsWindow(active.Window) || !IsWindow(active.Focus)) return;
         string selected = null;
@@ -513,7 +574,7 @@ internal static class ExplorerBridge
         }
         lock (Gate)
         {
-            if (source == null || source.Id != navigation.SourceId || selected == null || String.Equals(selected, source.Path, StringComparison.OrdinalIgnoreCase)) return;
+            if (Requests.LatestSerial != previewSerial || source == null || source.Id != navigation.SourceId || selected == null || String.Equals(selected, source.Path, StringComparison.OrdinalIgnoreCase)) return;
             source.Path = selected;
         }
         if (!File.Exists(selected) && !Directory.Exists(selected)) return;

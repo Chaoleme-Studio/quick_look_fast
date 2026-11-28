@@ -21,6 +21,11 @@ private struct FinderSelection {
 }
 
 private struct SelectionQuery {
+    private enum FileReference {
+        case path(String)
+        case unresolvedName(String)
+    }
+
     // Accessibility calls cross processes. Give up quickly if Finder is busy.
     let deadline = DispatchTime.now() + .milliseconds(55)
 
@@ -55,8 +60,24 @@ private struct SelectionQuery {
 
         // A multi-selection still belongs to the system's multi-item Quick Look.
         guard let selection = attribute(focused, selectionAttribute) as? [AXUIElement],
-              selection.count == 1, let filePath = filePath(in: selection[0], depth: 2),
-              hasTime else { return nil }
+              selection.count == 1,
+              let reference = fileReference(in: selection[0], depth: 2) else { return nil }
+        let filePath: String
+        switch reference {
+        case .path(let path):
+            filePath = path
+        case .unresolvedName(let name):
+            // In an expanded Finder outline the parent row can still have a
+            // valid URL even when the selected item's old file ID has expired.
+            // Do not guess a directory for top-level rows or other views.
+            guard role == kAXOutlineRole,
+                  let parent = disclosedParent(of: selection[0], in: focused),
+                  case .path(let directory) = fileReference(in: parent, depth: 2),
+                  let recovered = FinderSelectionPath.resolve(parent: directory, displayedName: name),
+                  hasTime else { return nil }
+            filePath = recovered
+        }
+        guard hasTime else { return nil }
         var fileInfo = stat()
         guard stat(filePath, &fileInfo) == 0 else { return nil }
         let type = fileInfo.st_mode & S_IFMT
@@ -71,15 +92,36 @@ private struct SelectionQuery {
         return CFEqual(owner, application)
     }
 
-    private func filePath(in element: AXUIElement, depth: Int) -> String? {
+    private func disclosedParent(of row: AXUIElement, in outline: AXUIElement) -> AXUIElement? {
+        if let parent = elementAttribute(row, kAXDisclosedByRowAttribute), !CFEqual(parent, row) {
+            return parent
+        }
+        // Some Finder versions omit AXDisclosedByRow. For a visible expanded
+        // outline, the nearest preceding row one level above is its parent.
+        guard let depth = (attribute(row, kAXDisclosureLevelAttribute) as? NSNumber)?.intValue, depth > 0,
+              let rows = attribute(outline, kAXVisibleRowsAttribute) as? [AXUIElement],
+              let index = rows.firstIndex(where: { CFEqual($0, row) }), index > 0 else { return nil }
+        for previous in rows[max(0, index - 64)..<index].reversed() {
+            guard let previousDepth = (attribute(previous, kAXDisclosureLevelAttribute) as? NSNumber)?.intValue else { return nil }
+            if previousDepth < depth { return previousDepth == depth - 1 ? previous : nil }
+        }
+        return nil
+    }
+
+    private func fileReference(in element: AXUIElement, depth: Int) -> FileReference? {
         // Finder supplies a file-reference URL on the selected icon or name cell.
-        if let url = attribute(element, kAXURLAttribute) as? URL, url.isFileURL,
-           let filePath = (url as NSURL).filePathURL?.path, filePath.hasPrefix("/") {
-            return filePath
+        if let url = attribute(element, kAXURLAttribute) as? URL {
+            if url.isFileURL, let filePath = (url as NSURL).filePathURL?.path, filePath.hasPrefix("/") {
+                return .path(filePath)
+            }
+            if attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole,
+               let name = attribute(element, kAXValueAttribute) as? String {
+                return .unresolvedName(name)
+            }
         }
         guard depth > 0, let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] else { return nil }
         for child in children.prefix(16) {
-            if let filePath = filePath(in: child, depth: depth - 1) { return filePath }
+            if let reference = fileReference(in: child, depth: depth - 1) { return reference }
         }
         return nil
     }
@@ -310,23 +352,28 @@ private final class FinderSpaceBridge {
     }
 }
 
-signal(SIGPIPE, SIG_IGN)
-guard fcntl(STDOUT_FILENO, F_SETFL, O_NONBLOCK) == 0 else { exit(EXIT_FAILURE) }
-if CommandLine.arguments.contains("--prompt-accessibility") {
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-    _ = AXIsProcessTrustedWithOptions(options)
-}
-_ = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.025)
-private let bridge = FinderSpaceBridge(interceptSpace: !CommandLine.arguments.contains("--navigation-only"))
-DispatchQueue.global(qos: .userInitiated).async {
-    let decoder = JSONDecoder()
-    while let line = readLine() {
-        guard line.utf8.count <= 4096,
-              let command = try? decoder.decode(FinderCommand.self, from: Data(line.utf8)) else { continue }
-        DispatchQueue.main.async { bridge.handle(command) }
+@main
+private struct FinderBridgeMain {
+    static func main() {
+        signal(SIGPIPE, SIG_IGN)
+        guard fcntl(STDOUT_FILENO, F_SETFL, O_NONBLOCK) == 0 else { exit(EXIT_FAILURE) }
+        if CommandLine.arguments.contains("--prompt-accessibility") {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
+        _ = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.025)
+        let bridge = FinderSpaceBridge(interceptSpace: !CommandLine.arguments.contains("--navigation-only"))
+        DispatchQueue.global(qos: .userInitiated).async {
+            let decoder = JSONDecoder()
+            while let line = readLine() {
+                guard line.utf8.count <= 4096,
+                      let command = try? decoder.decode(FinderCommand.self, from: Data(line.utf8)) else { continue }
+                DispatchQueue.main.async { bridge.handle(command) }
+            }
+            _exit(EXIT_SUCCESS)
+        }
+        bridge.refreshTap()
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in bridge.refreshTap() }
+        RunLoop.main.run()
     }
-    _exit(EXIT_SUCCESS)
 }
-bridge.refreshTap()
-Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in bridge.refreshTap() }
-RunLoop.main.run()

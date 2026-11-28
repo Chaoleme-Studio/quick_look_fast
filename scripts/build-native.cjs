@@ -9,6 +9,7 @@ if (process.platform === 'darwin') {
   const result = spawnSync('/usr/bin/xcrun', [
     'swiftc', '-O', '-target', `${process.arch}-apple-macosx26.0`,
     path.join(root, 'native', 'macos', 'FinderSpaceBridge.swift'),
+    path.join(root, 'native', 'macos', 'FinderSelectionPath.swift'),
     '-o', path.join(output, 'QuickLookFast.FinderBridge'),
   ], { stdio: 'inherit' });
   if (result.error) console.error(result.error.message);
@@ -37,6 +38,7 @@ const result = spawnSync(compiler, [
   path.join(root, 'native', 'windows', 'DopusSelection.cs'),
   path.join(root, 'native', 'windows', 'DopusIpc.cs'),
   path.join(root, 'native', 'windows', 'SelectionCache.cs'),
+  path.join(root, 'native', 'windows', 'PreviewRequestTracker.cs'),
   path.join(root, 'native', 'windows', 'KeyboardRecovery.cs'),
 ], { stdio: 'inherit' });
 if (result.error) console.error(result.error.message);

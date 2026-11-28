@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_RENDERER_DEFINITIONS } from '@file-viewer/core';
 import { signatureRendererDefinition } from '@file-viewer/renderer-signature';
-import { selectExtraRenderers } from '../src/preview/extra-renderers.ts';
+import { initialSpreadsheetView, selectExtraRenderers } from '../src/preview/extra-renderers.ts';
 import { FORCE_INSPECTION_EXTENSIONS } from '../src/preview/file-inspection.ts';
 
 test('format inventory distinguishes the upstream catalog from configured renderers and metadata fallbacks', () => {
@@ -36,4 +36,17 @@ test('published format list includes every configured content route and local me
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const readmeSection = readme.split('<!-- formats:content:start -->')[1]?.split('<!-- formats:content:end -->')[0];
   assert.equal(readmeSection?.replace(/\r\n/g, '\n'), section.replace(/\r\n/g, '\n'), 'README and format guide must contain the same table');
+});
+
+test('spreadsheet formats open at 100% without changing other document types', () => {
+  const spreadsheetFormats = DEFAULT_RENDERER_DEFINITIONS
+    .filter(definition => definition.packageName === '@file-viewer/renderer-spreadsheet')
+    .flatMap(definition => definition.extensions);
+  assert.ok(spreadsheetFormats.includes('xlsx') && spreadsheetFormats.includes('csv') && spreadsheetFormats.includes('dbf'));
+  for (const extension of spreadsheetFormats) {
+    assert.deepEqual(initialSpreadsheetView(`报告.${extension.toUpperCase()}`, DEFAULT_RENDERER_DEFINITIONS), { scale: 1 }, `${extension} must start at 100%`);
+  }
+  for (const name of ['report.docx', 'slides.pptx', 'image.png', 'workbook.xlsx.txt', 'no-extension']) {
+    assert.equal(initialSpreadsheetView(name, DEFAULT_RENDERER_DEFINITIONS), undefined, `${name} keeps its own viewer defaults`);
+  }
 });

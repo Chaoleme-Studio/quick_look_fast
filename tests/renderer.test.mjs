@@ -460,6 +460,11 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
         };
         for (let attempt = 0; attempt < 500 && !rendered(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
         assert.ok(rendered(), `${format} inside the nested ZIP reaches its document renderer`);
+        if (format === 'xlsx') {
+          const root = innerView.querySelector('.viewer-root').shadowRoot;
+          for (let attempt = 0; attempt < 200 && !root.querySelector('[data-viewer-toolbar-key="zoom-meter"]'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+          assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'Excel inside an archive starts at a readable scale');
+        }
       }
       [...innerView.querySelectorAll('.zip-file')].find((row) => row.textContent.includes('story.html')).click();
       for (let attempt = 0; attempt < 150 && !innerView.querySelector('.html-preview iframe'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -600,6 +605,13 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
         assert.match(root.textContent, /701\s*行，16\s*列/, 'Excel should parse the sample sheet dimensions');
         assert.ok(canvasCalls.some((call) => call.method === 'fillText'), 'Excel should issue canvas text drawing commands');
         assert.ok(canvasCalls.some((call) => call.method === 'fillRect'), 'Excel should issue canvas fill commands');
+        assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'a wide spreadsheet should not be shrunk to fit the viewport');
+        root.querySelector('[data-viewer-toolbar-key="zoom-in"]').click();
+        for (let attempt = 0; attempt < 100 && root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent !== '110%'; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '110%', 'manual spreadsheet zoom remains available');
+        root.querySelector('[data-viewer-toolbar-key="zoom-reset"]').click();
+        for (let attempt = 0; attempt < 100 && root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent !== '100%'; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(root.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'reset returns the spreadsheet to its default size');
       } else {
         for (let attempt = 0; attempt < 500 && root.querySelector('.flyfish-pptx-content')?.dataset.renderState !== 'ready'; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
         const content = root.querySelector('.flyfish-pptx-content');
@@ -659,6 +671,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     window.document.querySelector('.password-card').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
     for (let attempt = 0; attempt < 500 && !window.document.querySelector('.viewer-root')?.shadowRoot?.querySelector('canvas'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.ok(window.document.querySelector('.viewer-root')?.shadowRoot?.querySelector('canvas'), 'decrypted XLSX reaches the spreadsheet renderer');
+    for (let attempt = 0; attempt < 200 && !window.document.querySelector('.viewer-root')?.shadowRoot?.querySelector('[data-viewer-toolbar-key="zoom-meter"]'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(window.document.querySelector('.viewer-root')?.shadowRoot?.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'decrypted Excel starts at a readable scale');
 
     const docSource = await readFile(new URL('./fixtures/office-sample.docx', import.meta.url));
     const docEncrypted = officeCrypto.encrypt(docSource, { password: 'nested123' });
@@ -761,6 +775,8 @@ async function verifyTextPreview(useBundle, bundleDirectory) {
     window.document.querySelector('.folder-detail-body .password-card').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
     for (let attempt = 0; attempt < 500 && !window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.querySelector('canvas'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.ok(window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.querySelector('canvas'), 'encrypted folder Office reaches its renderer');
+    for (let attempt = 0; attempt < 200 && !window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.querySelector('[data-viewer-toolbar-key="zoom-meter"]'); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(window.document.querySelector('.folder-child-viewer .viewer-root')?.shadowRoot?.querySelector('[data-viewer-toolbar-key="zoom-meter"]')?.textContent, '100%', 'folder Excel starts at a readable scale');
     const navBeforeFolder = navigations.length;
     folderButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     assert.equal(navigations.length, navBeforeFolder, 'folder navigation should not alter the file manager selection');

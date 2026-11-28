@@ -1,4 +1,4 @@
-import type { RendererDefinition } from '@file-viewer/core';
+import type { RendererDefinition, FileViewerViewState } from '@file-viewer/core';
 
 // These formats belong to the standalone signature plugin, which is not part
 // of the shared core catalog. A regression test keeps the list in sync.
@@ -18,4 +18,13 @@ export function selectExtraRenderers(filename: string, definitions: readonly Ren
     if (definition.packageName === '@file-viewer/renderer-design') result.add('design');
   }
   return result;
+}
+
+// A spreadsheet can be wider than its viewport. Keep the text readable on
+// opening and let the user scroll horizontally or change the zoom manually.
+export function initialSpreadsheetView(filename: string, definitions: readonly RendererDefinition[]): FileViewerViewState | undefined {
+  const dot = filename.lastIndexOf('.');
+  const extension = dot < 0 ? '' : filename.slice(dot + 1).toLowerCase();
+  return definitions.some((definition) => definition.packageName === '@file-viewer/renderer-spreadsheet' && definition.extensions.includes(extension))
+    ? { scale: 1 } : undefined;
 }

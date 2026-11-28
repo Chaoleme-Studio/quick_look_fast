@@ -1,5 +1,5 @@
 import './style.css';
-import { selectExtraRenderers } from './preview/extra-renderers';
+import { initialSpreadsheetView, selectExtraRenderers } from './preview/extra-renderers';
 import { FORCE_INSPECTION_EXTENSIONS, formatHexSample, isProbablyText, readHead } from './preview/file-inspection';
 import { MarkdownOutline } from './preview/text/markdown-outline';
 import { mountFolderPreview, type FolderFile, type FolderPage, type FolderPreview, type FolderView } from './preview/folder/folder-preview';
@@ -706,7 +706,7 @@ function loadViewer(): Promise<typeof import('@file-viewer/web-full')> {
   if (!viewerPromise) viewerPromise = import('@file-viewer/web-full').catch((error) => { viewerPromise = undefined; throw error; });
   return viewerPromise;
 }
-async function loadModules(filename: string): Promise<{ viewer: typeof import('@file-viewer/web-full'); renderers: ViewerOptions['renderers'] }> {
+async function loadModules(filename: string): Promise<{ viewer: typeof import('@file-viewer/web-full'); renderers: ViewerOptions['renderers']; initialViewState: ViewerOptions['initialViewState'] }> {
   const [viewer, core] = await Promise.all([loadViewer(), import('@file-viewer/core')]);
   const extras = selectExtraRenderers(filename, core.DEFAULT_RENDERER_DEFINITIONS);
   const renderers = await Promise.all([
@@ -714,7 +714,7 @@ async function loadModules(filename: string): Promise<{ viewer: typeof import('@
     ...(extras.has('design') ? [import('@file-viewer/renderer-design').then((module) => module.designRenderer)] : []),
     ...(extras.has('signature') ? [import('@file-viewer/renderer-signature').then((module) => module.signatureRenderer)] : []),
   ]);
-  return { viewer, renderers: renderers as unknown as ViewerOptions['renderers'] };
+  return { viewer, renderers: renderers as unknown as ViewerOptions['renderers'], initialViewState: initialSpreadsheetView(filename, core.DEFAULT_RENDERER_DEFINITIONS) };
 }
 
 function showMetadataFallback(file: PreviewFile, reason: string, sample?: Uint8Array): void {
@@ -824,9 +824,10 @@ function onViewerState(state: ViewerState, sourceGeneration: number): void {
   }
 }
 
-function viewerOptions(renderers: ViewerOptions['renderers']): ViewerOptions {
+function viewerOptions(renderers: ViewerOptions['renderers'], initialViewState: ViewerOptions['initialViewState']): ViewerOptions {
   return {
     locale: 'zh-CN', theme: 'light', rendererMode: 'extend', renderers,
+    ...(initialViewState ? { initialViewState } : {}),
     image: { handTool: true },
     // The library ships a dedicated ZIP/XML worker; its default is disabled
     // unless explicitly configured. Keep page DOM layout on the UI thread.
@@ -911,11 +912,11 @@ async function renderZipEntry(name: string, blob: Blob, target: HTMLElement, sig
     signal.addEventListener('abort', dispose, { once: true });
     return () => { signal.removeEventListener('abort', dispose); dispose(); };
   }
-  const { viewer, renderers } = await loadModules(name);
+  const { viewer, renderers, initialViewState } = await loadModules(name);
   if (signal.aborted) return undefined;
   viewer.setDefaultFullAssetBaseUrl('/file-viewer/');
   const mount = document.createElement('div'); mount.className = 'viewer-root'; target.replaceChildren(mount);
-  const nested = viewer.mountViewer(mount, { options: viewerOptions(renderers) });
+  const nested = viewer.mountViewer(mount, { options: viewerOptions(renderers, initialViewState) });
   nestedControllers.add(nested);
   clarifySearchCount(mount);
   // A non-passive wheel listener makes Chromium wait for JavaScript before
@@ -1103,11 +1104,11 @@ async function renderFolderFile(file: FolderFile, target: HTMLElement, signal: A
     observer?.observe(scroller); refreshFolderText = update; update();
     return disposeOnAbort(() => { scroller.removeEventListener('scroll', update); observer?.disconnect(); if (refreshFolderText === update) refreshFolderText = undefined; });
   }
-  const { viewer, renderers } = await loadModules(filename);
+  const { viewer, renderers, initialViewState } = await loadModules(filename);
   if (signal.aborted) return undefined;
   viewer.setDefaultFullAssetBaseUrl('/file-viewer/');
   const mount = document.createElement('div'); mount.className = 'viewer-root'; target.replaceChildren(mount);
-  const nested = viewer.mountViewer(mount, { options: viewerOptions(renderers) });
+  const nested = viewer.mountViewer(mount, { options: viewerOptions(renderers, initialViewState) });
   nestedControllers.add(nested);
   clarifySearchCount(mount);
   const removeWheel = /\.(?:png|jpe?g|gif|webp|bmp|avif|tiff?|heic|heif|psd|svg|ico)$/i.test(filename) ? installImageWheelZoom(target, () => nested) : () => undefined;
@@ -1262,7 +1263,7 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
     if (/\.(?:png|jpe?g|gif|webp|bmp|avif|svg|ico|tiff?|heic|heif|psd)$/i.test(viewerFilename)) {
       removeMainImageWheel = installImageWheelZoom(viewerHost, () => controller);
     }
-    const { viewer, renderers } = await loadModules(viewerFilename);
+    const { viewer, renderers, initialViewState } = await loadModules(viewerFilename);
     if (current !== generation) return;
     if (!controller) {
       viewer.setDefaultFullAssetBaseUrl('/file-viewer/');
@@ -1270,7 +1271,7 @@ async function loadFlyfish(file: PreviewFile, current: number, viewerFilename = 
       mountRoot.className = 'viewer-root';
       viewerHost.replaceChildren(mountRoot);
       controller = viewer.mountViewer(mountRoot, {
-        options: viewerOptions(renderers),
+        options: viewerOptions(renderers, initialViewState),
       });
       clarifySearchCount(mountRoot);
       controller.subscribe((state) => onViewerState(state, current));
